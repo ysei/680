@@ -235,7 +235,7 @@ Z80Debugger_RET::
 *		âÊñ ê›íË		*
 *---------------------------------------*
 
-X1CRT:
+X1CRT::
 		move.w	(TXTY),d0
 		move.w	d0,(PwSCTXTY)
 		move.w	d0,(PwSCGP0Y)
@@ -258,7 +258,7 @@ X1CRT_LP:	move.w	(a0)+,(a1)+
 
 		rts
 
-DBCRT:
+DBCRT::
 		moveq.l	#0,d0
 		move.w	d0,(PwSCTXTY)
 		move.w	d0,(PwSCGP0Y)
@@ -278,7 +278,6 @@ DBCRT_LP:	move.w	(a0)+,(a1)+
 		rts
 
 
-		.data
 DCRT24:		dc.w	113,07,20,100,447,7,31,431,27
 		dc.b	%00010001
 		.even
@@ -288,7 +287,6 @@ DCRT31:		dc.w	137,14,28,108,567,5,40,440,27
 DCRT31DB:	dc.w	137,14,28,124,567,5,40,552,27
 		dc.b	%00010110
 		.even
-		.text
 
 
 *	*	*	*	*	*	*	*	*	*
@@ -2331,8 +2329,6 @@ SkipSpace_e::
 *	*	*	*	*	*	*	*	*	*
 
 
-		.bss
-
 TXTY::
 		ds.w	1
 Z80DebuggerActive::
@@ -2427,7 +2423,7 @@ SearchData::
 ExecCmdLineBuf::
 		ds.b	256
 
-
+		.even
 
  endif	*****************************************************************
 

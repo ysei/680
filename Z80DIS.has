@@ -12,10 +12,12 @@
 StrCpy		macro	p1
 		.local	l1
 		.local	l2
-		.data
+		.local	l3
+		bra	l3
 l1:		dc.b	p1
 		dc.b	0
-		.text
+		.even
+l3:
 		lea	l1,a2
 l2:		move.b	(a2)+,(a0)+
 		bne	l2
@@ -1394,9 +1396,6 @@ DisD0Byte_HexTable::
 *	*	*	*	*	*	*	*	*	*
 
 
-		.data
-
-
 		.even
 Cond_MesTable::
 		dc.w	Cond_NZ-Cond_MesTable
@@ -1531,6 +1530,8 @@ DisAsmIndexTable::
 	dc.b	0,2,0,2,0,0,0,0
 	dc.b	0,0,0,0,0,0,0,0
 	dc.b	0,2,0,0,0,0,0,0
+
+		.even
 
 
 

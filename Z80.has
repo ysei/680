@@ -39,6 +39,7 @@ F_OUTC	set	1
 
 	.xref	INP,OUT
 	.xref	INITIO
+	.xref	INITFM
 	.xref	INTRQ
 	.xref	FCALL
 	.xref	A_RND
@@ -80,6 +81,7 @@ A_RES:	lea	T_OPC,aTO
 	jsr	S_IM0			* IM 0
 	jsr	S_EDED
 	jsr	INITIO
+	jsr	INITFM
 
 	moveq	#0,d1
 	jsr	z00

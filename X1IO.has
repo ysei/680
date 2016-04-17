@@ -29,6 +29,7 @@
 	.xdef	IPLROM,CGROM
 	.xdef	A_IOB
 	.xdef	END
+	.xdef	O1E00
 
 	.xref	A_BAS
 	.xref	T_OPC,T_ROM
@@ -40,6 +41,7 @@
 	.xref	F_REPT,F_SIFT,F_LOCK,F_KBF,F_PSGSW,F_OPMSW
 
 	.xref	TXTY
+	.xref	X1MODE
 
 *	.globl	I0700,O0700
 *	.globl	I0F00,O0F00,DIRC,P_DISK
@@ -1045,6 +1047,10 @@ MOTORON:	* 8 654  10
 FOPEN:
 	move.b	d0,FILENO+2-CDRIVE(a0,d1.w)	* 14		* FILENO+2 = STR
 	move.b	d0,$0FF8(a1)			* 12
+	move.w	FILENO-CDRIVE(a0,d1.w),-(sp)	* 14		* FILENO = ファイルハンドル
+	bmi	@f
+	dc.w	$FF3E						* DOS _CLOSE
+@@:	addq.w	#2,sp
 	move.l	P_FILE-CDRIVE(a0,d1.w),-(sp)	* 26		* NAMEPTR
 	dc.w	$FF3D						* DOS _OPEN
 	addq.w	#6,sp				*  4
@@ -1504,10 +1510,10 @@ I1400:
 	andi.w	#$00FF,d0		*  8
 
 	asl.w	#3,d0			* 12
-	add.b	RAST_0-A_MEM(aME),d0	* 12
-	addq.b	#1,RAST_0-A_MEM(aME)	* 16
+	add.b	RAST-A_MEM(aME),d0	* 12
+	addq.b	#1,RAST-A_MEM(aME)	* 16
 
-	lea	CGROM-A_MEM(aME),a0	*  8
+	lea	CGROM,a0
 	move.b	(a0,d0.w),d1		* 14
 	rts				* 16
 
@@ -1518,14 +1524,18 @@ I1400:
 
 M_PCGI	macro	BN
 
+	local	GETCH
 	local	LPPCG
 	local	RAST0
 	local	SMCOL
 
 	move.w	d2,-(sp)		*  8
-	move.b	RAST_&BN-A_MEM(aME),d1	* 12
-	addq.b	#1,RAST_&BN-A_MEM(aME)	* 12
-
+	move.b	RAST-A_MEM(aME),d1	* 12
+	beq.s	RAST0			*  8(10)
+	cmp.w	PCGADR-A_MEM(aME),d0	* 12
+	beq.s	SMCOL			*  8(10)
+	subq.b	#1,d1			*  4
+GETCH:
 	clr.w	d0			*  4
 	move.w	VADR-A_MEM(aME),d2	* 12
 	move.b	(a1,d2.w),d0		* 14
@@ -1547,6 +1557,10 @@ LPPCG:	btst	d1,(a0)+		*  8
 	move.w	(sp)+,d2		*  8
 	rts				* 16
 
+RAST0:	move.w	d0,PCGADR-A_MEM(aME)	* 12
+SMCOL:	addq.b	#1,RAST-A_MEM(aME)	* 16
+	bra.s	GETCH			* 10	
+
 	endm
 
 
@@ -1561,9 +1575,12 @@ M_PCGO	macro	BN
 
 	move.w	d2,-(sp)		*  8
 	move.b	d1,d2			*  4
-	move.b	RAST_&BN-A_MEM(aME),d1	* 12
-	addq.b	#1,RAST_&BN-A_MEM(aME)	* 12
-
+	move.b	RAST-A_MEM(aME),d1	* 12
+	beq.s	RAST0			*  8(10)
+	cmp.w	PCGADR-A_MEM(aME),d0	* 12
+	beq.s	SMCOL			*  8(10)
+	subq.b	#1,d1			*  4
+GETCH:
 	move.w	VADR-A_MEM(aME),d0	* 12
 	move.b	(a1,d0.w),d0		* 14
 	andi.w	#$00FF,d0		*  8
@@ -1572,7 +1589,7 @@ M_PCGO	macro	BN
 	asl.w	#3,d0			* 12
 
 	lea	CGRAM,a0		* 12
-	lea	$4000(a0),a1		*  8
+	lea	CGRAMe,a1		* 12
 	adda.w	d0,a0			*  8
 	add.w	d0,d0			*  4
 	adda.w	d0,a1			*  8
@@ -1600,6 +1617,10 @@ ONPCG:
 	dbf	d0,LPPCG		* 14(10)
 	bra.s	COPYe			* 10
 
+RAST0:	move.w	d0,PCGADR-A_MEM(aME)	* 12
+SMCOL:	addq.b	#1,RAST-A_MEM(aME)	* 16
+	bra.s	GETCH			* 10	
+
 	endm
 
 
@@ -1613,9 +1634,8 @@ O1700:	M_PCGO	2
 
 
 	.data
-RAST_0:	dc.b	0
-RAST_1:	dc.b	0
-RAST_2:	dc.b	0
+PCGADR:	dc.w	0
+RAST:	dc.b	0
 	.even
 	.text
 
@@ -1637,17 +1657,25 @@ CRTCDAT:
 	andi.w	#$ff,d1
 	move.w	d1,VBLANK-A_MEM(aME)
 @@:
+	cmpi.b	#1,$1800(a1)		* 16
+	bne	@f
+	andi.w	#$ff,d1
+	move.w	d1,VWIDTH-A_MEM(aME)
+@@:
+	cmpi.b	#13,$1800(a1)		* 16
+	bne.s	@f			*  8(10)
+	andi.w	#$ff,d1
+	move.b	d1,1+VTOP-A_MEM(aME)	* 12
+@@:
 	cmpi.b	#12,$1800(a1)		* 16
 	bne.s	@f			*  8(10)
 	move.b	d1,d0
 	andi.b	#$07,d0			*  8
-	move.b	d0,$1800+$80+12(a1)	* 12
+	move.b	d0,VTOP-A_MEM(aME)	* 12
 A_SC1:	bne.s	W40SC1			*  8(10)
 	btst	#6,$1A02(a1)		* 16
 A_SC0:	bne.s	W40SC0			*  8(10)
 
-	move.w	#80,VWIDTH-A_MEM(aME)
-	move.w	#0,VTOP-A_MEM(aME)
 	move.w	#$0200,d0			* 8
 	move.w	d0,(TXTY)			* 16
 	move.w	d0,PwSCTXTY			* 16
@@ -1670,8 +1698,7 @@ RTCRTC:
 	rts					* 16
 
 W403D0:	move.b	#%01,PsSYSPT2			* 20
-W40SC0:	move.w	#40,VWIDTH-A_MEM(aME)		* 16
-	move.w	#0,VWIDTH-A_MEM(aME)		* 16
+W40SC0:
 	move.w	#$0200,d0			* 8
 	move.w	d0,(TXTY)			* 16
 	move.w	d0,PwSCTXTY			* 16
@@ -1679,8 +1706,7 @@ W40SC0:	move.w	#40,VWIDTH-A_MEM(aME)		* 16
 	rts					* 16
 
 W403D1:	move.b	#%10,PsSYSPT2			* 20
-W40SC1:	move.w	#40,VWIDTH-A_MEM(aME)		* 16
-	move.w	#$400,VWIDTH-A_MEM(aME)		* 16
+W40SC1:
 	move.w	#$0300,d0			* 8
 	move.w	d0,(TXTY)			* 16
 	move.w	d0,PwSCTXTY			* 16
@@ -1994,9 +2020,7 @@ I1A00:
 	subq.b	#1,d0			*  4
 	bne.s	RTI1A			*  8(10)
 
-	move.b	d0,RAST_0-A_MEM(aME)	* 12
-	move.b	d0,RAST_1-A_MEM(aME)	* 12
-	move.b	d0,RAST_2-A_MEM(aME)	* 12
+	move.b	d0,RAST-A_MEM(aME)	* 12
 	move.w	VWIDTH-A_MEM(aME),d0
 	mulu	VBLANK-A_MEM(aME),d0
 	add.w	VTOP-A_MEM(aME),d0
@@ -2106,8 +2130,6 @@ SETWIDTH:
 	tst.b	d0				*  4
 	bne.s	WIDTH40				*  8(10)
 WIDTH80:
-	move.w	#80,VWIDTH-A_MEM(aME)
-	move.w	#0,VTOP-A_MEM(aME)
 	move.w	#(O2000H-A_BAS),d1	*  8
 	moveq	#$08-1,d0		*  4
 	bsr.w	SBWIDT			* 18
@@ -2137,6 +2159,7 @@ WIDTH80:
 	move.l	d1,-(sp)
 	X68030
 	move.l	(sp)+,d1
+	bsr	TXRST80
 	move.w	(sp)+,d1		*  8
 	rts				* 16
 
@@ -2170,6 +2193,7 @@ WIDTH40:
 	move.l	d1,-(sp)
 	X68030
 	move.l	(sp)+,d1
+	bsr	TXRST40
 	move.w	(sp)+,d1		*  8
 	rts				* 16
 
@@ -2177,6 +2201,50 @@ SBWIDT:
 	move.w	d1,(a0)+		*  8
 	dbf	d0,SBWIDT		* 14(10)
 	rts				* 16
+
+TXRST80:
+	movem.l	d0-d7/a0-a6,-(sp)
+	cmpi.w	#80,(TXRSTFLG)
+	beq	TXRST80_e
+	move.w	#80,(TXRSTFLG)
+	moveq.l	#0,d0
+	move.w	#$2000,BC
+TXRST80L:
+	move.b	(a1,BC.w),d1
+	subq.b	#1,d1
+	bsr	O2000H
+	move.b	(a1,BC.w),d1
+	add.b	#1,d1
+	bsr	O2000H
+	addq.w	#1,BC
+	cmp.w	#$2800,BC
+	bne	TXRST80L
+TXRST80_e:
+	movem.l	(sp)+,d0-d7/a0-a6
+	rts
+
+TXRST40:
+	movem.l	d0-d7/a0-a6,-(sp)
+	cmpi.w	#40,(TXRSTFLG)
+	beq	TXRST40_e
+	move.w	#40,(TXRSTFLG)
+	moveq.l	#0,d0
+	move.w	#$2000,BC
+TXRST40L:
+	move.b	(a1,BC.w),d1
+	subq.b	#1,d1
+	bsr	O2000L
+	move.b	(a1,BC.w),d1
+	addq.b	#1,d1
+	bsr	O2000L
+	addq.w	#1,BC
+	cmp.w	#$2800,BC
+	bne	TXRST40L
+TXRST40_e:
+	movem.l	(sp)+,d0-d7/a0-a6
+	rts
+
+TXRSTFLG:	dc.w	0
 
 
 *---------------------------------------*
@@ -2698,9 +2766,9 @@ O1D00:						* IPL ROM ON
 	bsr.s	SBROM			* 18
 
 	lea	(aME),a1		*  4
-	moveq	#8-1,d1			*  4
-LPO1D1:	lea	IPLROM-A_MEM(aME),a0	*  8
-	move.w	#$1000/4-1,d0		*  8
+	moveq	#1-1,d1			*  4
+LPO1D1:	lea	IPLROM,a0
+	move.w	#$8000/4-1,d0		*  8
 LPO1D2:	move.l	(a0)+,(a1)+		* 20
 	dbf	d0,LPO1D2		* 14(10)
 	dbf	d1,LPO1D1		* 14(10)
@@ -2770,6 +2838,8 @@ I1F00:
 	beq.w	I_CTC2			* 12(10)
 	subq.b	#1,d0			*  4		* $1FAB
 	beq.w	I_CTC3			* 12(10)
+	subi.b	#$45,d0					* $1FF0
+	beq	I_1FF0
 	st.b	d1			*  4
 	rts				* 16
 
@@ -2845,6 +2915,15 @@ SIOCOM:
 	andi.b	#%00000111,d1		*  8
 	move.b	d1,$1F9B(a1)		* 12
 	rts				* 16
+
+I_1FF0:
+	tst.w	(X1MODE)
+	beq	@f
+	move.b	#$f1,d1
+	rts
+@@:
+	st.b	d1
+	rts
 
 
 *---------------------------------------*
@@ -2926,6 +3005,11 @@ DFAT0H:	adda.w	BC,a1			*  8
 
 O3800L:
 	lea	-$0800(a1),a1		*  8
+	tst.w	(X1MODE)
+	beq	@f
+	lea	$0800(a1),a1		*  8
+	rts
+@@:
 O3000L:
  .ifdef TEXTSPEED
 	cmp.b	(a1,BC.w),d1
@@ -3249,6 +3333,11 @@ SKATSL:	adda.w	(sp)+,a1		* 12
 
 O3800H:
 	lea	-$0800(a1),a1		*  8
+	tst.w	(X1MODE)
+	beq	@f
+	lea	$0800(a1),a1		*  8
+	rts
+@@:
 O3000H:
  .ifdef TEXTSPEED
 	cmp.b	(a1,BC.w),d1
@@ -3561,27 +3650,33 @@ OC000L:
 	M_GRL	$00E5
 DAMD0L:
 	lea	(a1,BC.w),a0		* 12
-	move.b	d1,$4000(a0)		* 12
-	move.b	d1,$8000-$10000(a0)	* 12
-	move.b	d1,$C000-$10000(a0)	* 12
+	move.b	d1,$4000(a0)		* 12	* B
+	move.b	d1,$8000-$10000(a0)	* 12	* R
+	move.b	d1,$C000-$10000(a0)	* 12	* G
 	move.w	#%01_0111_0000,PwCRTC21	* 20
 	M_GRL	$00E1
 DAMD4L:
-	lea	(a1,BC.w),a0		* 12
-	move.b	d1,$8000-$10000(a0)	* 12
-	move.b	d1,$C000-$10000(a0)	* 12
+	move.w	BC,d0
+	andi.w	#$3fff,d0
+	lea	(a1,d0.w),a0		* 12
+	move.b	d1,$8000-$10000(a0)	* 12	* R
+	move.b	d1,$C000-$10000(a0)	* 12	* G
 	move.w	#%01_0110_0000,PwCRTC21	* 20
 	M_GRL	$00E1
 DAMD8L:
-	lea	(a1,BC.w),a0		* 12
-	move.b	d1,$4000(a0)		* 12
-	move.b	d1,$C000-$10000(a0)	* 12
+	move.w	BC,d0
+	andi.w	#$3fff,d0
+	lea	(a1,d0.w),a0		* 12
+	move.b	d1,$4000(a0)		* 12	* B
+	move.b	d1,$C000-$10000(a0)	* 12	* G
 	move.w	#%01_0101_0000,PwCRTC21	* 20
 	M_GRL	$00E1
 DAMDCL:
-	lea	(a1,BC.w),a0		* 12
-	move.b	d1,$4000(a0)		* 12
-	move.b	d1,$8000-$10000(a0)	* 12
+	move.w	BC,d0
+	andi.w	#$3fff,d0
+	lea	(a1,d0.w),a0		* 12
+	move.b	d1,$4000(a0)		* 12	* B
+	move.b	d1,$8000-$10000(a0)	* 12	* R
 	move.w	#%01_0011_0000,PwCRTC21	* 20
 	M_GRL	$00E1
 
@@ -3624,27 +3719,33 @@ OC000H:
 	M_GRH	$00E5
 DAMD0H:
 	lea	(a1,BC.w),a0		* 12
-	move.b	d1,$4000(a0)		* 12
-	move.b	d1,$8000-$10000(a0)	* 12
-	move.b	d1,$C000-$10000(a0)	* 12
+	move.b	d1,$4000(a0)		* 12	* B
+	move.b	d1,$8000-$10000(a0)	* 12	* R
+	move.b	d1,$C000-$10000(a0)	* 12	* G
 	move.w	#%01_0111_0000,PwCRTC21	* 20
 	M_GRH	$00E1
 DAMD4H:
-	lea	(a1,BC.w),a0		* 12
-	move.b	d1,$8000-$10000(a0)	* 12
-	move.b	d1,$C000-$10000(a0)	* 12
+	move.w	BC,d0
+	andi.w	#$3fff,d0
+	lea	(a1,d0.w),a0		* 12
+	move.b	d1,$8000-$10000(a0)	* 12	* R
+	move.b	d1,$C000-$10000(a0)	* 12	* G
 	move.w	#%01_0110_0000,PwCRTC21	* 20
 	M_GRH	$00E1
 DAMD8H:
-	lea	(a1,BC.w),a0		* 12
-	move.b	d1,$4000(a0)		* 12
-	move.b	d1,$C000-$10000(a0)	* 12
+	move.w	BC,d0
+	andi.w	#$3fff,d0
+	lea	(a1,d0.w),a0		* 12
+	move.b	d1,$4000(a0)		* 12	* B
+	move.b	d1,$C000-$10000(a0)	* 12	* G
 	move.w	#%01_0101_0000,PwCRTC21	* 20
 	M_GRH	$00E1
 DAMDCH:
-	lea	(a1,BC.w),a0		* 12
-	move.b	d1,$4000(a0)		* 12
-	move.b	d1,$8000-$10000(a0)	* 12
+	move.w	BC,d0
+	andi.w	#$3fff,d0
+	lea	(a1,d0.w),a0		* 12
+	move.b	d1,$4000(a0)		* 12	* B
+	move.b	d1,$8000-$10000(a0)	* 12	* R
 	move.w	#%01_0011_0000,PwCRTC21	* 20
 	M_GRH	$00E1
 
@@ -3956,20 +4057,20 @@ T_GPT:
 P_EMM:	dcb.w	64*2,$FFFF
 P_ROM:	dc.l	$FFFFFFFF
 	.even
-IPLROM:	ds.b	$1000
-CGROM:	ds.b	$0800
-
 
 	.bss
 
 	.even
 	ds.b	$8000
-A_IOB:	ds.b	$8000
+A_IOB::	ds.b	$8000
 
-CROM2:	ds.b	8*8*$100
-CROM2e:	ds.b	8*8*$100*2
-CGRAM:	ds.b	8*8*$100
-CGRAMe:	ds.b	8*8*$100*2
+CROM2::		ds.b	8*8*$100
+CROM2e:		ds.b	8*8*$100*2
+CGRAM::		ds.b	8*8*$100
+CGRAMe::	ds.b	8*8*$100*2
+
+IPLROM:	ds.b	$8000
+CGROM:	ds.b	$0800
 
 
 END:
