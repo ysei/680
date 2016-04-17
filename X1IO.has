@@ -3,8 +3,11 @@
 *   Ｘ１ I/O エミュレータ for X68000 Ver 1.00	*
 *						*
 *	 Copyright 1993/03/16 森田 浩次		*
+*	 Modified  1994/01/20 GORRY.		*
 *						*
 *************************************************
+
+	.cpu	68000
 
 *	d0  0000 ----
 *	d1  0000 00-- (INP ---- ----)
@@ -34,16 +37,18 @@
 	.xref	D_CONT,D_KEY
 	.xref	D_CTC,C_CTC
 	.xref	V_KEY,V_CTC
-	.xref	F_REPT,F_SIFT,F_LOCK,F_KBF
+	.xref	F_REPT,F_SIFT,F_LOCK,F_KBF,F_PSGSW,F_OPMSW
+
+	.xref	TXTY
 
 *	.globl	I0700,O0700
 *	.globl	I0F00,O0F00,DIRC,P_DISK
 *	.globl	O1B00
 
-BC	equ	d5
-aPC	equ	a3
-aME	equ	a5
-aBS	equ	a6
+BC	reg	d5
+aPC	reg	a3
+aME	reg	a5
+aBS	reg	a6
 
 OVAD	equ	4			* 非表示ＶＲＡＭ読み込み時のオフセット値
 
@@ -55,6 +60,7 @@ PwSCTXTY	equ	$E80016		* CRTC R11  テキストスクロール（Ｙ方向）
 PwSCGP0Y	equ	$E8001A		* CRTC R13  グラフィックP0スクロール（Ｙ方向）
 PwCRTC21	equ	$E8002A		* CRTC R21
 
+PwGRPPAL	equ	$E82000		* グラフィックパレット
 PwTXTPAL	equ	$E82200		* テキストパレット
 
 PwVCTRL2	equ	$E82500		* ビデオコントローラ Reg.2
@@ -83,6 +89,21 @@ PsJOYST1	equ	$E9A001		* ジョイスティック１
 PsJOYST2	equ	$E9A003		* ジョイスティック２
 
 PsINTSTA	equ	$E9C001		* 割り込みステータス
+
+*---------------------------------------*
+*	X68030対策			*
+*---------------------------------------*
+
+X68030	macro
+	local	l1
+	tst.w	($cbc.w)
+	beq	l1
+	moveq.l	#3,d1
+	moveq.l	#$ac,d0
+	trap	#15
+l1:
+	endm
+
 
 *---------------------------------------*
 *	     ＩＮＩＴ Ｉ／Ｏ		*
@@ -132,9 +153,9 @@ INITIO:
 	move.l	#$00000000,TRACK+4*2
 	move.l	#$00000000,TRACK+4*3
 
-	lea	A_IOB+$2000,a0				* テキストアトリビュート初期化
-	move.b	#$07,d1
-	move.w	#$800-1,d0
+	lea	A_IOB+$2000,a0				* テキストのダミー初期化
+	move.b	#$ff,d1
+	move.w	#$2000-1,d0
 LPIATR:	move.b	d1,(a0)+
 	dbf	d0,LPIATR
 
@@ -150,31 +171,75 @@ LPIIO1:	move.b	(a0)+,(a1)+
 	move.w	#(OUTSe-OUTS)-1,d0
 LPIIO2:	move.b	(a0)+,(a1)+
 	dbf	d0,LPIIO2
+	X68030
 
+	moveq.l	#0,d0
+	moveq.l	#0,d1
 	lea	A_IOB,a1
 	jsr	O1D00					* IPL ON
 
 	rts
 
 INITFM:							* ＦＭ音源初期化
-	move.w	d0,-(sp)
+	move.l	d0,-(sp)
 
+	move.w	#7,d0
+LPIFM:
 	jsr	WAITOPMi
 	move.b	#$08,PsOPMADR
-	move.w	#7,d0
-LPIFM:	jsr	WAITOPMi
+	jsr	WAITOPMi
 	move.b	d0,PsOPMDAT
 	dbf	d0,LPIFM
+
+	jsr	WAITOPMi
+	move.b	#$01,PsOPMADR
+	jsr	WAITOPMi
+	move.b	#$02,PsOPMDAT
+
+	jsr	WAITOPMi
+	move.b	#$01,PsOPMADR
+	jsr	WAITOPMi
+	move.b	#$00,PsOPMDAT
 
 	jsr	WAITOPMi
 	move.b	#$0F,PsOPMADR
 	jsr	WAITOPMi
 	move.b	#$00,PsOPMDAT
 
-	move.w	(sp)+,d0
+	jsr	WAITOPMi
+	move.b	#$18,PsOPMADR
+	jsr	WAITOPMi
+	move.b	#$00,PsOPMDAT
+
+	jsr	WAITOPMi
+	move.b	#$19,PsOPMADR
+	jsr	WAITOPMi
+	move.b	#$00,PsOPMDAT
+
+	jsr	WAITOPMi
+	move.b	#$19,PsOPMADR
+	jsr	WAITOPMi
+	move.b	#$00,PsOPMDAT
+
+	jsr	WAITOPMi
+	move.b	#$1B,PsOPMADR
+	jsr	WAITOPMi
+	move.b	#$00,PsOPMDAT
+
+	moveq.l	#$20,d0
+LPIFM2:
+	jsr	WAITOPMi
+	move.b	d0,PsOPMADR
+	jsr	WAITOPMi
+	move.b	#$ff,PsOPMDAT
+	addq.b	#1,d0
+	bne	LPIFM2
+
+	move.l	(sp)+,d0
 	rts
 
 WAITOPMi:
+	nop
 	tst.b	PsOPMDAT
 	bmi.s	WAITOPMi
 	rts
@@ -203,6 +268,9 @@ LPIND:	move.w	(a0)+,(a1)+			* 12
 	move.l	#$42403F05,INP-A_BAS(aBS)	* 24	* clr.w d0 : move.w BC,-(sp)
 	move.w	#%00_0000_0000,PwCRTC21		* 20
 	lea	A_IOB,a1			* 12
+	move.l	d1,-(sp)
+	X68030
+	move.l	(sp)+,d1
 	bra.w	INP				* 10
 *	rts					* 16
 
@@ -239,6 +307,9 @@ OUTDe:
 
 OUTIPL:
 	move.l	#$42403F05,OUT				* clr.w d0 : move.w BC,-(sp)
+	movem.l	d0/d1,-(sp)
+	X68030
+	movem.l	(sp)+,d0/d1
 	cmpa.l	#A_MEM+$001F,aPC
 	bne.s	NOTRES
 
@@ -273,6 +344,9 @@ SKNDAT:
 	rts				* 16
 
 O0700:
+	tst.b	(F_OPMSW)
+	beq	NO_OPM
+
 	move.b	BC,d0			*  4		* $0700
 	beq.s	OPMADR			*  8(10)
 	subq.b	#1,d0			*  4		* $0701
@@ -284,7 +358,7 @@ O0700:
 	beq.w	O_CTC2			* 12(10)
 	subq.b	#1,d0			*  4		* $0707
 	beq.w	O_CTC3			* 12(10)
-
+NO_OPM:
 	rts				* 16
 OPMADR:
 	move.b	d1,$0700(a1)		* 12
@@ -334,7 +408,7 @@ ST_LFO:
 	not.b	d0			*  4
 	and.b	$0009DA,d0		* 16
 	or.b	d0,d1			*  4
-*	move.b	d1,$0009DA		* 16
+	move.b	d1,$0009DA		* 16
 	moveq	#$1B,d0			*  4
 	bra.s	ST_DAT			* 10
 ST_TIM:
@@ -549,11 +623,13 @@ CTRL3D:
 	move.b	d1,PsSYSPT2					* 16
 	move.b	#.low.(W403D0-(A_SC0+2)),A_SC0+1-A_BAS(aBS)	* 16
 	move.b	#.low.(W403D1-(A_SC1+2)),A_SC1+1-A_BAS(aBS)	* 16
+	X68030
 	rts							* 16
 CT3DOP:
 	move.b	d0,PsSYSPT2					* 16
 	move.b	#.low.(W40SC0-(A_SC0+2)),A_SC0+1-A_BAS(aBS)	* 16
 	move.b	#.low.(W40SC1-(A_SC1+2)),A_SC1+1-A_BAS(aBS)	* 16
+	X68030
 	rts							* 16
 
 
@@ -824,12 +900,13 @@ I0F00:
 	lea	P_DISK-A_MEM(aME),a0		*  8
 	move.w	(a0),d0				*  8
 	move.b	B_DISK-P_DISK(a0,d0.w),d1	* 14
-A_RDAT:	cmpi.w	#$00FF,d0			*  8
+	cmp.w	(A_RDAT),d0			*  8
 	bcc.s	INNOCT				*  8(10)
 
 	addq.w	#1,d0				*  4
 	move.w	d0,(a0)				*  8
 	rts					* 16
+A_RDAT:	dc.w	$00ff
 INNOCT:
 	beq.s	INESCT				*  8(10)
 	addq.w	#1,d0				*  4		* P_DISK = -1
@@ -859,7 +936,14 @@ INNODR:
 	beq.s	RTIFFA				*  8(10)
 	clr.b	d1				*  4
 	rts					* 16
-RTIFF8:	move.b	$0FF8(a1),d1			* 12
+RTIFF8::	move.b	$0FF8(a1),d1			* 12
+	cmpi.w	#$100-1,(A_RDAT)
+	bne	RTIFF8_1
+	lea	P_DISK-A_MEM(aME),a0		*  8
+	cmp.w	#-2,(a0)
+	bne	RTIFF8_1
+	clr.w	(a0)				* 本来は必要なダミーリードをなくす
+RTIFF8_1:
 	rts					* 16
 RTIFF9:	move.b	$0FF9(a1),d1			* 12
 	rts					* 16
@@ -879,12 +963,13 @@ O0F00:
 	lea	P_DISK-A_MEM(aME),a0		*  8
 	move.w	(a0),d0				*  8
 	move.b	d1,B_DISK-P_DISK(a0,d0.w)	* 14
-A_WDAT:	cmpi.w	#$00FF,d0			*  8
+	cmp.w	(A_WDAT),d0			*  8
 	bcc.s	OTNOCT				*  8(10)
 
 	addq.w	#1,d0				*  4
 	move.w	d0,(a0)				*  8
 	rts					* 16
+A_WDAT:	dc.w	$00FF
 OTNOCT:
 	beq.s	OTESCT				*  8(10)
 	move.b	d1,$0FFB(a1)			* 12
@@ -1074,16 +1159,16 @@ TRACK00:
 	rts					* 16
 
 READTRAK:						* リードトラック
-	move.w	#$1900-1,A_RDAT+2-A_BAS(aBS)	* 16
+	move.w	#$1900-1,(A_RDAT)	* 16
 	move.l	#$1900,-(sp)			* 20		* SIZE = $1900
 	move.b	#$00,SECTOR-A_MEM(aME)		* 16
 	bra.s	RDATA				* 10
 READDATAm:
-	move.w	#$1000-1,A_RDAT+2-A_BAS(aBS)	* 16
+	move.w	#$1000-1,(A_RDAT)	* 16
 	move.l	#$1000,-(sp)			* 20		* SIZE = $1000
 	bra.s	RDATA				* 10
 READDATA:						* リードデータ
-	move.w	#$0100-1,A_RDAT+2-A_BAS(aBS)	* 16
+	move.w	#$0100-1,(A_RDAT)	* 16
 	move.l	#$0100,-(sp)			* 20		* SIZE =  $100
 RDATA:
 	lea	CDRIVE-A_MEM(aME),a0		*  8
@@ -1119,7 +1204,7 @@ RDERR:	moveq	#%00010000,d0			*  4		* Record Not Found
 	rts					* 16
 
 READADRS:						* リードアドレス
-	move.w	#$0006-1,A_RDAT+2-A_BAS(aBS)	* 16
+	move.w	#$0006-1,(A_RDAT)	* 16
 
 	lea	CDRIVE-A_MEM(aME),a0		*  8
 	move.w	#0,P_DISK-CDRIVE(a0)		* 16		* P_DISK = 0
@@ -1149,13 +1234,13 @@ READADRS:						* リードアドレス
 	rts					* 16
 
 WRITTRAK:						* ライトトラック
-	move.w	#$1900-1,A_WDAT+2-A_BAS(aBS)	* 16
+	move.w	#$1900-1,(A_WDAT)	* 16
 	bra.s	WDATA				* 10
 WRITDATAm:
-	move.w	#$1000-1,A_WDAT+2-A_BAS(aBS)	* 16
+	move.w	#$1000-1,(A_WDAT)	* 16
 	bra.s	WDATA				* 10
 WRITDATA:						* ライトデータ
-	move.w	#$0100-1,A_WDAT+2-A_BAS(aBS)	* 16
+	move.w	#$0100-1,(A_WDAT)	* 16
 WDATA:
 	lea	CDRIVE-A_MEM(aME),a0		*  8
 	move.w	(a0),d1				*  8
@@ -1258,78 +1343,140 @@ B_DISK:	ds.b	$1900
 *    グラフィックパレット (10**-12**)	*
 *---------------------------------------*
 
-O1000:
+O1000::
 	move.b	d1,$1000(a1)			* 12
-	lea	PwTXTPAL+16*2,a0		* 12
-	moveq	#8-1,d0				*  4
+	lea	PalWork_e(pc),a0
+	moveq.l	#$8-1,d0
+	move.l	d2,-(sp)
+	move.w	A_PALB(pc),d2
+LP_O10:
+	add.b	d1,d1
+	bcs.s	ON_O10
+	and.w	d2,-(a0)
+	bra	O10_NEXT
+ON_O10:
+	ori.w	#%00000_00000_11111_0,-(a0)
+O10_NEXT:
+	dbra	d0,LP_O10
+	move.l	(sp)+,d2
+	bra	PutPalet
 
-LP_O10:	btst	#4,PsMFPGPI			* 20		* bit4 = 0  垂直帰線期間
-	bne.s	LP_O10				*  8(10)
-	add.b	d1,d1				*  4
-	bcs.s	ON_O10				*  8(10)
-A_PALB:	andi.w	#%11111_11111_00000_1,-(a0)	* 18
-	dbf	d0,LP_O10			* 14(10)
-	rts
-ON_O10:	ori.w	#%00000_00000_11111_0,-(a0)	* 18
-	dbf	d0,LP_O10			* 14(10)
-	rts
-
-O1100:
+O1100::
 	move.b	d1,$1100(a1)			* 12
-	lea	PwTXTPAL+16*2,a0		* 12
-	moveq	#8-1,d0				*  4
+	lea	PalWork_e(pc),a0
+	moveq.l	#$8-1,d0
+	move.l	d2,-(sp)
+	move.w	A_PALR(pc),d2
+LP_O11:
+	add.b	d1,d1
+	bcs.s	ON_O11
+	and.w	d2,-(a0)
+	bra	O11_NEXT
+ON_O11:
+	ori.w	#%00000_11111_00000_0,-(a0)
+O11_NEXT:
+	dbra	d0,LP_O11
+	move.l	(sp)+,d2
+	bra	PutPalet
 
-LP_O11:	btst	#4,PsMFPGPI			* 20		* bit4 = 0  垂直帰線期間
-	bne.s	LP_O11				*  8(10)
-	add.b	d1,d1				*  4
-	bcs.s	ON_O11				*  8(10)
-A_PALR:	andi.w	#%11111_00000_11111_1,-(a0)	* 18
-	dbf	d0,LP_O11			* 14(10)
-	rts
-ON_O11:	ori.w	#%00000_11111_00000_0,-(a0)	* 18
-	dbf	d0,LP_O11			* 14(10)
-	rts
-
-O1200:
+O1200::
 	move.b	d1,$1200(a1)			* 12
-	lea	PwTXTPAL+16*2,a0		* 12
-	moveq	#8-1,d0				*  4
+	lea	PalWork_e(pc),a0
+	moveq.l	#$8-1,d0
+	move.l	d2,-(sp)
+	move.w	A_PALG(pc),d2
+LP_O12:
+	add.b	d1,d1
+	bcs.s	ON_O12
+	and.w	d2,-(a0)
+	bra	O12_NEXT
+ON_O12:
+	ori.w	#%11111_00000_00000_0,-(a0)
+O12_NEXT:
+	dbra	d0,LP_O12
+	move.l	(sp)+,d2
+	bra	PutPalet
 
-LP_O12:	btst	#4,PsMFPGPI			* 20		* bit4 = 0  垂直帰線期間
-	bne.s	LP_O12				*  8(10)
-	add.b	d1,d1				*  4
-	bcs.s	ON_O12				*  8(10)
-A_PALG:	andi.w	#%00000_11111_11111_1,-(a0)	* 18
-	dbf	d0,LP_O12			* 14(10)
-	rts
-ON_O12:	ori.w	#%11111_00000_00000_0,-(a0)	* 18
-	dbf	d0,LP_O12			* 14(10)
+PutPalet:
+	btst	#4,PsMFPGPI
+	bne.s	PutPalet
+	lea	PalWork(pc),a0
+	move.w	(a0)+,d0
+	tst.b	(PRW0)
+	beq	PutPalet_0_Off
+PutPalet_0_On:
+@@:	clr.w	(PwTXTPAL)
+	move.w	d0,(PwTXTPAL+8*2)
+	bra	PutPalet_1
+PutPalet_0_Off:
+	tst.w	d0
+	bne	@f
+	ori.w	#%00000_00001_00000_0,d0
+@@:	move.w	d0,(PwTXTPAL)
+	clr.w	(PwTXTPAL+8*2)
+	bra	PutPalet_1
+PutPalet_1:
+	movem.l	d1/a1,-(sp)
+	lea	PwTXTPAL+9*2,a1
+	moveq.l	#7-1,d1
+PutPalet_lp:
+	move.w	(a0)+,d0
+	bne	@f
+	ori.w	#%00000_00001_00000_0,d0
+@@:	move.w	d0,(a1)+
+	dbra	d1,PutPalet_lp
+	movem.l	(sp)+,d1/a1
 	rts
 
+A_PALB:	dc.w	%11111_11111_00000_0
+A_PALR:	dc.w	%11111_00000_11111_0
+A_PALG:	dc.w	%00000_11111_11111_0
+
+PalWork::
+	dc.w	%00000_00000_00000_0
+	dc.w	%00000_00000_11111_0
+	dc.w	%00000_11111_00000_0
+	dc.w	%00000_11111_11111_0
+	dc.w	%11111_00000_00000_0
+	dc.w	%11111_00000_11111_0
+	dc.w	%11111_11111_00000_0
+	dc.w	%11111_11111_11111_0
+PalWork_e::
 
 *---------------------------------------*
 *	  プライオリティ (1300)		*
 *---------------------------------------*
 
-O1300:
+O1300::
 	tst.b	BC					*  4
 	bne.s	RTO13					*  8(10)
+	moveq.l	#$01,d0
+	and.b	d1,d0
+	move.b	d0,(PRW0)
 	tst.b	d1					*  4	* $00
 	beq.s	PRW00					*  8(10)
 	addq.b	#1,d1					*  4	* $FF
 	beq.s	PRWFF					*  8(10)
+	addq.b	#1,d1					*  4	* $FE
+	beq	PRWFF					*  8(10)
 
+ .if 0
 	moveq	#0,d0					*  4
 	jsr	S_CONT-A_BAS(aBS)			* 18
 	move.w	#O1300c-A_BAS,(T_OUT+$13*2)-A_BAS(aBS)	* 16
+ .endif
 PRWFF:	move.w	#%00_10_00_01_11_10_01_00,PwVCTRL2	* 20	* Ｘ１グラフィック優先
 	rts						* 16
 PRW00:	move.w	#%00_10_01_00_11_10_01_00,PwVCTRL2	* 20	* Ｘ１テキスト優先
-RTO13:	rts						* 16
+RTO13:	bra	PutPalet
 		*    SP TX GR P3 P2 P1 P0
+ .if 0
 O1300c:
 	tst.b	BC					*  4
 	bne.s	RTO13c					*  8(10)
+	moveq.l	#$01,d0
+	and.b	d1,d0
+	move.b	d0,(PRW0)
 	tst.b	d1					*  4	* $00
 	beq.s	PRW00c					*  8(10)
 	addq.b	#1,d1					*  4	* $FF
@@ -1341,8 +1488,11 @@ PRW00c	move.w	#%00_10_01_00_11_10_01_00,PwVCTRL2	* 20	* Ｘ１テキスト優先
 SKPRWc:	move.b	D_CONT-A_BAS(aBS),d0			* 12
 	jsr	S_CONT-A_BAS(aBS)			* 18
 	move.w	#O1300-A_BAS,(T_OUT+$13*2)-A_BAS(aBS)	* 16
-RTO13c:	rts						* 16
+RTO13c:	bra	PutPalet
+ .endif
 
+PRW0:	dc.b	0
+	.even
 
 *---------------------------------------*
 *	   ＣＧ ＲＯＭ (14**)		*
@@ -1354,8 +1504,8 @@ I1400:
 	andi.w	#$00FF,d0		*  8
 
 	asl.w	#3,d0			* 12
-	add.b	RAST-A_MEM(aME),d0	* 12
-	addq.b	#1,RAST-A_MEM(aME)	* 16
+	add.b	RAST_0-A_MEM(aME),d0	* 12
+	addq.b	#1,RAST_0-A_MEM(aME)	* 16
 
 	lea	CGROM-A_MEM(aME),a0	*  8
 	move.b	(a0,d0.w),d1		* 14
@@ -1368,18 +1518,14 @@ I1400:
 
 M_PCGI	macro	BN
 
-	local	GETCH
 	local	LPPCG
 	local	RAST0
 	local	SMCOL
 
 	move.w	d2,-(sp)		*  8
-	move.b	RAST-A_MEM(aME),d1	* 12
-	beq.s	RAST0			*  8(10)
-	cmp.w	PCGADR-A_MEM(aME),d0	* 12
-	beq.s	SMCOL			*  8(10)
-	subq.b	#1,d1			*  4
-GETCH:
+	move.b	RAST_&BN-A_MEM(aME),d1	* 12
+	addq.b	#1,RAST_&BN-A_MEM(aME)	* 12
+
 	clr.w	d0			*  4
 	move.w	VADR-A_MEM(aME),d2	* 12
 	move.b	(a1,d2.w),d0		* 14
@@ -1401,10 +1547,6 @@ LPPCG:	btst	d1,(a0)+		*  8
 	move.w	(sp)+,d2		*  8
 	rts				* 16
 
-RAST0:	move.w	d0,PCGADR-A_MEM(aME)	* 12
-SMCOL:	addq.b	#1,RAST-A_MEM(aME)	* 16
-	bra.s	GETCH			* 10	
-
 	endm
 
 
@@ -1419,12 +1561,9 @@ M_PCGO	macro	BN
 
 	move.w	d2,-(sp)		*  8
 	move.b	d1,d2			*  4
-	move.b	RAST-A_MEM(aME),d1	* 12
-	beq.s	RAST0			*  8(10)
-	cmp.w	PCGADR-A_MEM(aME),d0	* 12
-	beq.s	SMCOL			*  8(10)
-	subq.b	#1,d1			*  4
-GETCH:
+	move.b	RAST_&BN-A_MEM(aME),d1	* 12
+	addq.b	#1,RAST_&BN-A_MEM(aME)	* 12
+
 	move.w	VADR-A_MEM(aME),d0	* 12
 	move.b	(a1,d0.w),d0		* 14
 	andi.w	#$00FF,d0		*  8
@@ -1461,10 +1600,6 @@ ONPCG:
 	dbf	d0,LPPCG		* 14(10)
 	bra.s	COPYe			* 10
 
-RAST0:	move.w	d0,PCGADR-A_MEM(aME)	* 12
-SMCOL:	addq.b	#1,RAST-A_MEM(aME)	* 16
-	bra.s	GETCH			* 10	
-
 	endm
 
 
@@ -1478,8 +1613,9 @@ O1700:	M_PCGO	2
 
 
 	.data
-PCGADR:	ds.w	1
-RAST:	dc.b	0
+RAST_0:	dc.b	0
+RAST_1:	dc.b	0
+RAST_2:	dc.b	0
 	.even
 	.text
 
@@ -1496,36 +1632,66 @@ O1800:
 	move.b	d1,$1800(a1)		* 12
 	rts				* 16
 CRTCDAT:
+	cmpi.b	#6,$1800(a1)		* 16
+	bne	@f
+	andi.w	#$ff,d1
+	move.w	d1,VBLANK-A_MEM(aME)
+@@:
 	cmpi.b	#12,$1800(a1)		* 16
-	bne.s	RTCRTC			*  8(10)
-	andi.b	#$07,d1			*  8
-	move.b	d1,$1800+$80+12(a1)	* 12
+	bne.s	@f			*  8(10)
+	move.b	d1,d0
+	andi.b	#$07,d0			*  8
+	move.b	d0,$1800+$80+12(a1)	* 12
 A_SC1:	bne.s	W40SC1			*  8(10)
 	btst	#6,$1A02(a1)		* 16
 A_SC0:	bne.s	W40SC0			*  8(10)
 
-	move.w	#$37D0+OVAD,VADR-A_MEM(aME)	* 16
-	clr.w	d0				*  4
+	move.w	#80,VWIDTH-A_MEM(aME)
+	move.w	#0,VTOP-A_MEM(aME)
+	move.w	#$0200,d0			* 8
+	move.w	d0,(TXTY)			* 16
 	move.w	d0,PwSCTXTY			* 16
 	move.w	d0,PwSCGP0Y			* 16
-RTCRTC:	rts					* 16
+@@:
+
+WIDTHCRTC:
+ .ifdef WIDTHCRTC
+	cmpi.b	#1,$1800(a1)		* 16
+	bne	@f
+	moveq.l	#0,d0
+	move.b	d1,d0
+	cmpi.b	#40+8,d0
+	scs	d0
+	bsr	SETWIDTH
+@@:
+ .endif
+
+RTCRTC:
+	rts					* 16
 
 W403D0:	move.b	#%01,PsSYSPT2			* 20
-W40SC0:	move.w	#$33E8+OVAD,VADR-A_MEM(aME)	* 16
-	clr.w	d0				*  4
+W40SC0:	move.w	#40,VWIDTH-A_MEM(aME)		* 16
+	move.w	#0,VWIDTH-A_MEM(aME)		* 16
+	move.w	#$0200,d0			* 8
+	move.w	d0,(TXTY)			* 16
 	move.w	d0,PwSCTXTY			* 16
 	move.w	d0,PwSCGP0Y			* 16
 	rts					* 16
 
 W403D1:	move.b	#%10,PsSYSPT2			* 20
-W40SC1:	move.w	#$37E8+OVAD,VADR-A_MEM(aME)	* 16
-	move.w	#$0100,d0			*  8
+W40SC1:	move.w	#40,VWIDTH-A_MEM(aME)		* 16
+	move.w	#$400,VWIDTH-A_MEM(aME)		* 16
+	move.w	#$0300,d0			* 8
+	move.w	d0,(TXTY)			* 16
 	move.w	d0,PwSCTXTY			* 16
 	move.w	d0,PwSCGP0Y			* 16
 	rts					* 16
 
 	.data
 VADR:	ds.w	1
+VBLANK:	dc.w	25
+VWIDTH:	dc.w	40
+VTOP:	dc.w	0
 	.text
 
 
@@ -1828,7 +1994,15 @@ I1A00:
 	subq.b	#1,d0			*  4
 	bne.s	RTI1A			*  8(10)
 
-	move.b	d0,RAST-A_MEM(aME)	* 12
+	move.b	d0,RAST_0-A_MEM(aME)	* 12
+	move.b	d0,RAST_1-A_MEM(aME)	* 12
+	move.b	d0,RAST_2-A_MEM(aME)	* 12
+	move.w	VWIDTH-A_MEM(aME),d0
+	mulu	VBLANK-A_MEM(aME),d0
+	add.w	VTOP-A_MEM(aME),d0
+	addi.w	#$3000+OVAD,d0
+	move.w	d0,VADR-A_MEM(aME)
+	moveq.l	#0,d0
 	btst	#4,PsMFPGPI		* 20		* bit4 = 0  垂直帰線期間
 	beq.s	VDISP0			*  8(10)
 
@@ -1836,6 +2010,7 @@ I1A00:
 	btst	#5,PsINTSTA		* 20		* bit5 = 0  プリンタBUSY
 	bne.s	RTI1A			*  8(10)
 	addq.b	#%00001000,d1		*  4
+	bclr	#6,d1
 	rts				* 16
 
 VDISP0:	addq.b	#%00000101,d1		*  4
@@ -1915,52 +2090,57 @@ LPDAM:	move.w	(a0)+,(a1)+		* 12
 	dbf	d0,LPDAM		* 14(10)
 
 	move.l	#($6000*$10000)+.loww.(INPD-(INP+2)),INP-A_BAS(aBS)	* 24	* bra.w INPD
+	move.l	d1,-(sp)
+	X68030
+	move.l	(sp)+,d1
 	lea	A_IOB,a1		* 12
 	rts				* 16
 
 PCBIT6:							* WIDTH (0=80/-1=40桁)
+ .ifdef	WIDTHCRTC
+	rts
+ .endif
+SETWIDTH:
 	move.w	d1,-(sp)			*  8
 	lea	T_OUT+$20*2-A_MEM(aME),a0	*  8
 	tst.b	d0				*  4
 	bne.s	WIDTH40				*  8(10)
 WIDTH80:
-	move.w	#$37D0+OVAD,VADR-A_MEM(aME)	* 16
+	move.w	#80,VWIDTH-A_MEM(aME)
+	move.w	#0,VTOP-A_MEM(aME)
 	move.w	#(O2000H-A_BAS),d1	*  8
 	moveq	#$08-1,d0		*  4
-	bsr.s	SBWIDT			* 18
+	bsr.w	SBWIDT			* 18
 	move.w	#(O2800H-A_BAS),d1	*  8
 	moveq	#$08-1,d0		*  4
-	bsr.s	SBWIDT			* 18
+	bsr.w	SBWIDT			* 18
 	move.w	#(O3000H-A_BAS),d1	*  8
 	moveq	#$08-1,d0		*  4
-	bsr.s	SBWIDT			* 18
+	bsr.w	SBWIDT			* 18
 	move.w	#(O3800H-A_BAS),d1	*  8
 	moveq	#$08-1,d0		*  4
-	bsr.s	SBWIDT			* 18
+	bsr.w	SBWIDT			* 18
 	move.w	#(O4000H-A_BAS),d1	*  8
 	moveq	#$40-1,d0		*  4
-	bsr.s	SBWIDT			* 18
+	bsr.w	SBWIDT			* 18
 	move.w	#(O8000H-A_BAS),d1	*  8
 	moveq	#$40-1,d0		*  4
-	bsr.s	SBWIDT			* 18
+	bsr.w	SBWIDT			* 18
 	move.w	#(OC000H-A_BAS),d1	*  8
 	moveq	#$40-1,d0		*  4
-	bsr.s	SBWIDT			* 18
+	bsr.w	SBWIDT			* 18
 
 	move.w	#(DAMD0H-OUT)+(OUTD-(A_OD0+2)),A_OD0+2-A_BAS(aBS)	* 16
 	move.w	#(DAMD4H-OUT)+(OUTD-(A_OD4+2)),A_OD4+2-A_BAS(aBS)	* 16
 	move.w	#(DAMD8H-OUT)+(OUTD-(A_OD8+2)),A_OD8+2-A_BAS(aBS)	* 16
 	move.w	#(DAMDCH-OUT)+(OUTD-(A_ODC+2)),A_ODC+2-A_BAS(aBS)	* 16
+	move.l	d1,-(sp)
+	X68030
+	move.l	(sp)+,d1
 	move.w	(sp)+,d1		*  8
 	rts				* 16
 
 WIDTH40:
-	move.w	#$33E8+OVAD,d0		*  8
-	tst.b	$1800+$80+12(a1)	* 12
-	beq.s	SKDW40			*  8(10)
-	move.w	#$37E8+OVAD,d0		*  8
-SKDW40:
-	move.w	d0,VADR-A_MEM(aME)	* 12
 	move.w	#(O2000L-A_BAS),d1	*  8
 	moveq	#$08-1,d0		*  4
 	bsr.s	SBWIDT			* 18
@@ -1987,6 +2167,9 @@ SKDW40:
 	move.w	#(DAMD4L-OUT)+(OUTD-(A_OD4+2)),A_OD4+2-A_BAS(aBS)	* 16
 	move.w	#(DAMD8L-OUT)+(OUTD-(A_OD8+2)),A_OD8+2-A_BAS(aBS)	* 16
 	move.w	#(DAMDCL-OUT)+(OUTD-(A_ODC+2)),A_ODC+2-A_BAS(aBS)	* 16
+	move.l	d1,-(sp)
+	X68030
+	move.l	(sp)+,d1
 	move.w	(sp)+,d1		*  8
 	rts				* 16
 
@@ -2020,6 +2203,8 @@ JOY2:
 	rts				* 16
 
 O1B00:
+	tst.b	(F_PSGSW)
+	beq	NO_PSG
 	clr.w	d0			*  4
 	lea	$1B00(a1),a0		*  8
 	move.b	$0100(a0),d0		* 12
@@ -2034,6 +2219,10 @@ O1B00:
 O1C00:
 	move.b	d1,$1C00(a1)		* 12
 	rts				* 16
+
+NO_PSG:
+	move.b	d1,(a0,d0.w)		* 14
+	rts
 
 T_PSG:
 	dc.w	PSG00-A_BAS
@@ -2293,7 +2482,8 @@ SKSNOI:
 	bsr.w	SETOPM			* 18
 
 	lea	A_IOB,a1		* 12
-	rts				* 16
+	move.b	$06+$1B00(a1),d1
+	bra	PSG06
 RESENV:
 	st	F_OFE-A_MEM(aME)	* 16
 	sf	0-($68+4)(a1,d0.w)	* 18
@@ -2436,18 +2626,24 @@ LPVSET:
 	rts				* 16
 SETOPM2:
 	bsr.s	WAITOPM			* 18
-	move.b	d1,-2(a0)		* 12
+*	move.b	d1,-2(a0)		* 12
+	move.b	d1,PsOPMADR		* 16
 	bsr.s	WAITOPM			* 18
-	move.b	(a1)+,(a0)		* 12
+*	move.b	(a1)+,(a0)		* 12
+	move.b	(a1)+,PsOPMDAT		* 20
 	rts				* 16
 SETOPM:
 	bsr.s	WAITOPM			* 18
-	move.b	d0,-2(a0)		* 12
+*	move.b	d0,-2(a0)		* 12
+	move.b	d0,PsOPMADR		* 16
 	bsr.s	WAITOPM			* 18
-	move.b	d1,(a0)			*  8
+*	move.b	d1,(a0)			*  8
+	move.b	d1,PsOPMDAT		* 20
 	rts				* 16
 WAITOPM:
-	tst.b	(a0)			*  8
+	nop
+*	tst.b	(a0)			*  8
+	tst.b	PsOPMDAT		* 16
 	bmi.s	WAITOPM			*  8(10)
 	rts				* 16
 
@@ -2491,6 +2687,9 @@ F_OFE:	dc.b	0
 
 O1D00:						* IPL ROM ON
 	move.l	#($6000*$10000)+.loww.(OUTIPL-(OUT+2)),OUT-A_BAS(aBS)	* 24	* bra.w OUTIPL
+	move.l	d1,-(sp)
+	X68030
+	move.l	(sp)+,d1
 	tst.b	F_ROM-A_MEM(aME)	* 12
 	bne.s	RTO1D			*  8(10)
 
@@ -2571,7 +2770,7 @@ I1F00:
 	beq.w	I_CTC2			* 12(10)
 	subq.b	#1,d0			*  4		* $1FAB
 	beq.w	I_CTC3			* 12(10)
-	clr.b	d1			*  4
+	st.b	d1			*  4
 	rts				* 16
 
 O1F00:
@@ -2652,6 +2851,9 @@ SIOCOM:
 *  テキストアトリビュート (2000-27FF)	*
 *---------------------------------------*
 
+;TEXTATRSPEED:
+TEXTSPEED:
+ .ifdef TEXTSPEED
 O2800L:
 	lea	-$0800(a1),a0		*  8
 	cmp.b	(a0,BC.w),d1		* 14
@@ -2661,17 +2863,31 @@ O2000L:
 	cmp.b	(a1,BC.w),d1		* 14
 	bne.s	DFAT0L			*  8(10)
 	rts				* 16
+ .else
+O2800L:
+	lea	-$0800(a1),a0		*  8
+	bra.s	DFAT8L			*  8(10)
+O2000L:
+	bra.s	DFAT0L			*  8(10)
+ .endif
 
 DFAT8L:	lea	(a0),a1			*  4
 DFAT0L:	adda.w	BC,a1			*  8
 	move.b	d1,(a1)			*  8
 
+ .ifdef TEXTATRSPEED
+	moveq	#0,d0			*  4
+	moveq	#0,d1			*  4
+	lea	A_IOB,a1		* 12
+	rts				* 16
+ .endif
 	lea	+$1000(a1),a1		*  8
 	move.b	(a1),d1			* 12
 	bra.w	CHATRL			* 10
 
 *---------------------------------------
 
+ .ifdef TEXTSPEED
 O2800H:
 	lea	-$0800(a1),a0		*  8
 	cmp.b	(a0,BC.w),d1		* 14
@@ -2681,11 +2897,24 @@ O2000H:
 	cmp.b	(a1,BC.w),d1		* 14
 	bne.s	DFAT0H			*  8(10)
 	rts				* 16
+ .else
+O2800H:
+	lea	-$0800(a1),a0		*  8
+	bra.s	DFAT8H			*  8(10)
+O2000H:
+	bra.s	DFAT0H			*  8(10)
+ .endif
 
 DFAT8H:	lea	(a0),a1			*  4
 DFAT0H:	adda.w	BC,a1			*  8
 	move.b	d1,(a1)			*  8
 
+ .ifdef TEXTATRSPEED
+	moveq	#0,d0			*  4
+	moveq	#0,d1			*  4
+	lea	A_IOB,a1		* 12
+	rts				* 16
+ .endif
 	lea	+$1000(a1),a1		*  8
 	move.b	(a1),d1			* 12
 	bra.w	CHATRH			* 10
@@ -2698,6 +2927,10 @@ DFAT0H:	adda.w	BC,a1			*  8
 O3800L:
 	lea	-$0800(a1),a1		*  8
 O3000L:
+ .ifdef TEXTSPEED
+	cmp.b	(a1,BC.w),d1
+	beq	O3000L_Quit
+ .endif
 	adda.w	BC,a1			*  8
 	move.b	d1,(a1)			*  8
 CHATRL:
@@ -2707,7 +2940,7 @@ CHATRL:
 	bcs.s	SCRNT0			*  8(10)
 	add.w	#$0100,d0		*  8
 SCRNT0:	divu	#40,d0			*<144
-	ori.w	#$0300,d0		*  8
+	ori.w	#$0340,d0		*  8
 	swap	d0			*  4
 	asl.w	#7,d0			* 20
 	asr.l	#2,d0			* 12
@@ -2810,6 +3043,7 @@ JPNOML:	add.w	d0,d0			*  4
 	M_ATNL	$3800			* 88
 	M_ATNL	$3810			* 88
 
+O3000L_Quit:
 	moveq	#0,d0			*  4
 	moveq	#0,d1			*  4
 	lea	A_IOB,a1		* 12
@@ -3016,13 +3250,17 @@ SKATSL:	adda.w	(sp)+,a1		* 12
 O3800H:
 	lea	-$0800(a1),a1		*  8
 O3000H:
+ .ifdef TEXTSPEED
+	cmp.b	(a1,BC.w),d1
+	beq	O3000H_Quit
+ .endif
 	adda.w	BC,a1			*  8
 	move.b	d1,(a1)			*  8
 CHATRH:
 	move.w	BC,d0			*  4
 	andi.w	#$07FF,d0		*  8
 	divu	#80,d0			*<144
-	ori.w	#$0300,d0		*  8
+	ori.w	#$0340,d0		*  8
 	swap	d0			*  4
 	asl.w	#6,d0			* 18
 	asr.l	#2,d0			* 12
@@ -3121,6 +3359,7 @@ JPNOMH:	add.w	d0,d0			*  4
 	M_ATNH	$3800			* 44
 	M_ATNH	$3808			* 44
 
+O3000H_Quit:
 	moveq	#0,d0			*  4
 	moveq	#0,d1			*  4
 	lea	A_IOB,a1		* 12
@@ -3313,38 +3552,38 @@ SCRNG0:	move.w	d0,(a0,d1.l)		* 14
 
 O4000L:
 	move.b	d1,(a1,BC.w)		* 14
-	M_GRL	$00E0
+	M_GRL	$00E1
 O8000L:
 	move.b	d1,(a1,BC.w)		* 14
-	M_GRL	$00E2
+	M_GRL	$00E3
 OC000L:
 	move.b	d1,(a1,BC.w)		* 14
-	M_GRL	$00E4
+	M_GRL	$00E5
 DAMD0L:
 	lea	(a1,BC.w),a0		* 12
 	move.b	d1,$4000(a0)		* 12
-	move.b	d1,$8000(a0)		* 12
-	move.b	d1,$C000(a0)		* 12
+	move.b	d1,$8000-$10000(a0)	* 12
+	move.b	d1,$C000-$10000(a0)	* 12
 	move.w	#%01_0111_0000,PwCRTC21	* 20
-	M_GRL	$00E0
+	M_GRL	$00E1
 DAMD4L:
 	lea	(a1,BC.w),a0		* 12
-	move.b	d1,$8000(a0)		* 12
-	move.b	d1,$C000(a0)		* 12
+	move.b	d1,$8000-$10000(a0)	* 12
+	move.b	d1,$C000-$10000(a0)	* 12
 	move.w	#%01_0110_0000,PwCRTC21	* 20
-	M_GRL	$00E0
+	M_GRL	$00E1
 DAMD8L:
 	lea	(a1,BC.w),a0		* 12
 	move.b	d1,$4000(a0)		* 12
-	move.b	d1,$C000(a0)		* 12
+	move.b	d1,$C000-$10000(a0)	* 12
 	move.w	#%01_0101_0000,PwCRTC21	* 20
-	M_GRL	$00E0
+	M_GRL	$00E1
 DAMDCL:
 	lea	(a1,BC.w),a0		* 12
 	move.b	d1,$4000(a0)		* 12
-	move.b	d1,$8000(a0)		* 12
+	move.b	d1,$8000-$10000(a0)	* 12
 	move.w	#%01_0011_0000,PwCRTC21	* 20
-	M_GRL	$00E0
+	M_GRL	$00E1
 
 *---------------------------------------
 
@@ -3376,38 +3615,38 @@ M_GRH	macro	ADR
 
 O4000H:
 	move.b	d1,(a1,BC.w)		* 14
-	M_GRH	$00E0
+	M_GRH	$00E1
 O8000H:
 	move.b	d1,(a1,BC.w)		* 14
-	M_GRH	$00E2
+	M_GRH	$00E3
 OC000H:
 	move.b	d1,(a1,BC.w)		* 14
-	M_GRH	$00E4
+	M_GRH	$00E5
 DAMD0H:
 	lea	(a1,BC.w),a0		* 12
 	move.b	d1,$4000(a0)		* 12
-	move.b	d1,$8000(a0)		* 12
-	move.b	d1,$C000(a0)		* 12
+	move.b	d1,$8000-$10000(a0)	* 12
+	move.b	d1,$C000-$10000(a0)	* 12
 	move.w	#%01_0111_0000,PwCRTC21	* 20
-	M_GRH	$00E0
+	M_GRH	$00E1
 DAMD4H:
 	lea	(a1,BC.w),a0		* 12
-	move.b	d1,$8000(a0)		* 12
-	move.b	d1,$C000(a0)		* 12
+	move.b	d1,$8000-$10000(a0)	* 12
+	move.b	d1,$C000-$10000(a0)	* 12
 	move.w	#%01_0110_0000,PwCRTC21	* 20
-	M_GRH	$00E0
+	M_GRH	$00E1
 DAMD8H:
 	lea	(a1,BC.w),a0		* 12
 	move.b	d1,$4000(a0)		* 12
-	move.b	d1,$C000(a0)		* 12
+	move.b	d1,$C000-$10000(a0)	* 12
 	move.w	#%01_0101_0000,PwCRTC21	* 20
-	M_GRH	$00E0
+	M_GRH	$00E1
 DAMDCH:
 	lea	(a1,BC.w),a0		* 12
 	move.b	d1,$4000(a0)		* 12
-	move.b	d1,$8000(a0)		* 12
+	move.b	d1,$8000-$10000(a0)	* 12
 	move.w	#%01_0011_0000,PwCRTC21	* 20
-	M_GRH	$00E0
+	M_GRH	$00E1
 
 
 *---------------------------------------*
@@ -3429,10 +3668,10 @@ RETO:
 *	move.b	d1,(a1,BC.w)		* 14
 	rts				* 16
 
-RETIA	equ	.loww.(RETI-A_BAS).w
-RETINA	equ	.loww.(RETIN-A_BAS).w
-RETITA	equ	.loww.(RETIT-A_BAS).w
-RETOA	equ	.loww.(RETO-A_BAS).w
+RETIA	reg	.loww.(RETI-A_BAS).w
+RETINA	reg	.loww.(RETIN-A_BAS).w
+RETITA	reg	.loww.(RETIT-A_BAS).w
+RETOA	reg	.loww.(RETO-A_BAS).w
 
 *---------------------------------------*
 *	 ＩＮＰ　＆　ｔａｂｌｅ		*
@@ -3731,6 +3970,7 @@ CROM2:	ds.b	8*8*$100
 CROM2e:	ds.b	8*8*$100*2
 CGRAM:	ds.b	8*8*$100
 CGRAMe:	ds.b	8*8*$100*2
+
 
 END:
 

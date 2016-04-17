@@ -3,9 +3,12 @@
 *	 Z80 Emulator for 68000 Ver 1.01	*
 *						*
 *	Copyright  1993/03/06 Koji Morita	*
+*	Modified   1994/01/20 GORRY.		*
 *						*
 *************************************************
 
+
+	.cpu	68000
 
 *	d0   00 00  -- --	a0   ---- ----
 *	d1   00 00  -- --	a1   ---- ----
@@ -18,7 +21,7 @@
 
 *	F=vhhn_SZVC
 
-F_ROM	set	0
+*F_ROM	set	0
 
 F_NEXT	set	1
 F_ADAW	set	1
@@ -40,18 +43,21 @@ F_OUTC	set	1
 	.xref	FCALL
 	.xref	A_RND
 
-FR	set	d2
-XY	set	d3
-AC	set	d4
-BC	set	d5
-DE	set	d6
-HL	set	d7
+	.xref	Z80Debugger
+	.xref	BPZ80Debugger
 
-aSP	set	a2
-aPC	set	a3
-aTO	set	a4
-aME	set	a5
-aBS	set	a6
+FR	reg	d2
+XY	reg	d3
+AC	reg	d4
+BC	reg	d5
+DE	reg	d6
+HL	reg	d7
+
+aSP	reg	a2
+aPC	reg	a3
+aTO	reg	a4
+aME	reg	a5
+aBS	reg	a6
 
 
 *---------------------------------------*
@@ -137,7 +143,7 @@ if F_ROM=1
 	bmi.s	H8000			*  8(10)
 	lea	A_WOM,a0		* 12
 H8000:
-aME	set	a0
+aME	reg	a0
 endif
 
 	endm
@@ -156,7 +162,7 @@ endif
 C_ROM2	macro
 
 if F_ROM=1
-aME	set	a5
+aME	reg	a5
 endif
 
 	endm
@@ -201,7 +207,35 @@ if F_IXY=2
 endif
 
 if F_NEXT=1
+	if Z80DEBUG
+	jsr	Z80Debugger
+	endif
+
 	move.b	(aPC)+,d1		*  8
+	add.w	d1,d1			*  4
+	move.w	(aTO,d1.w),d0		* 14
+	jmp	(aBS,d0.w)		* 14
+else
+	bra.w	A_NEXT2			* 10
+endif
+
+	endm
+
+NEXT2_	macro							* 40
+
+	C_ROM2
+if F_IXY=2
+	swap	XY			*  4
+endif
+
+if F_NEXT=1
+
+	if Z80DEBUG
+	jsr	BPZ80Debugger
+	else
+	move.b	(aPC)+,d1		*  8
+	endif
+
 	add.w	d1,d1			*  4
 	move.w	(aTO,d1.w),d0		* 14
 	jmp	(aBS,d0.w)		* 14
@@ -218,7 +252,7 @@ endif
 *    ALU (Arithmetic Logical Unit)	*
 *---------------------------------------*
 
-HL	set	d7
+HL	reg	d7
 F_IXY	set	0
 F_XYCB	set	0
 
@@ -417,7 +451,24 @@ z09:	M_09	BC				* ADD HL,BC
 
 z0A:	M_0A	BC				* LD A,(BC)
 
-z0B:	M_0B	BC				* DEC BC
+z0B:*	M_0B	BC				* DEC BC
+	subq.w	#1,BC			*  4
+	move.b	(aPC)+,-(sp)
+	move.w	(sp)+,d0
+	move.b	(aPC)+,d0
+	cmpi.w	#$78b1,d0 * LD A,B; OR C
+	bne	@f
+	move.w	BC,-(sp)
+	move.b	(sp)+,AC
+	or.b	BC,AC			*  4
+	move	sr,FR			*  6
+	moveq	#%0000_1100,d1		*  4
+	and.w	d1,FR			*  4
+	move.b	AC,(aBS)		*  8
+	NEXT2				* 40
+@@:	subq.w	#2,aPC
+	NEXT2				* 40
+
 
 z0C:	M_0C	BC				* INC C
 
@@ -479,7 +530,26 @@ z19:	M_09	DE				* ADD HL,DE
 
 z1A:	M_0A	DE				* LD A,(DE)
 
-z1B:	M_0B	DE				* DEC DE
+z1B:*	M_0B	DE				* DEC DE
+	subq.w	#1,DE			*  4
+	move.b	(aPC)+,-(sp)
+	move.w	(sp)+,d0
+	move.b	(aPC)+,d0
+	cmpi.w	#$7ab3,d0 * LD A,D; OR E
+	bne	@f
+	move.w	DE,-(sp)
+	move.b	(sp)+,AC
+	or.b	DE,AC			*  4
+	move	sr,FR			*  6
+	moveq	#%0000_1100,d1		*  4
+	and.w	d1,FR			*  4
+	move.b	AC,(aBS)		*  8
+	NEXT2				* 40
+@@:	subq.w	#2,aPC
+	NEXT2				* 40
+
+
+
 
 z1C:	M_0C	DE				* INC E
 
@@ -677,7 +747,23 @@ z29:	M_09	HL				* ADD HL,HL
 
 z2A:	LD_ssnn	HL				* LD HL,(nn)
 
-z2B:	M_0B	HL				* DEC HL
+z2B:*	M_0B	HL				* DEC HL
+	subq.w	#1,HL			*  4
+	move.b	(aPC)+,-(sp)
+	move.w	(sp)+,d0
+	move.b	(aPC)+,d0
+	cmpi.w	#$7cb5,d0 * LD A,H; OR L
+	bne	@f
+	move.w	HL,-(sp)
+	move.b	(sp)+,AC
+	or.b	HL,AC			*  4
+	move	sr,FR			*  6
+	moveq	#%0000_1100,d1		*  4
+	and.w	d1,FR			*  4
+	move.b	AC,(aBS)		*  8
+	NEXT2				* 40
+@@:	subq.w	#2,aPC
+	NEXT2				* 40
 
 z2C:	M_0C	HL				* INC L
 
@@ -1010,21 +1096,55 @@ z76:						* HALT		28(10)		2.8
 				endif
 z77:	LD_HLl	AC				* LD (HL),A
 				if F_ROM=0
-z78:	LD_lh	AC,BC				* LD A,B
+z78:*	LD_lh	AC,BC				* LD A,B
+	move.w	BC,-(sp)
+	move.b	(sp)+,AC
+	cmpi.b	#$b1,(aPC) * OR C
+	bne	@f
+	addq.w	#1,aPC
+	or.b	BC,AC			*  4
+	move	sr,FR			*  6
+	moveq	#%0000_1100,d1		*  4
+	and.w	d1,FR			*  4
+	move.b	AC,(aBS)		*  8
+@@:	NEXT2				* 40
 
 z79:	LD_ll	AC,BC				* LD A,C
 
-z7A:	LD_lh	AC,DE				* LD A,D
+z7A:*	LD_lh	AC,DE				* LD A,D
+	move.w	DE,-(sp)
+	move.b	(sp)+,AC
+	cmpi.b	#$b3,(aPC) * OR E
+	bne	@f
+	addq.w	#1,aPC
+	or.b	DE,AC			*  4
+	move	sr,FR			*  6
+	moveq	#%0000_1100,d1		*  4
+	and.w	d1,FR			*  4
+	move.b	AC,(aBS)		*  8
+@@:	NEXT2				* 40
 
 z7B:	LD_ll	AC,DE				* LD A,E
 
-z7C:	LD_lh	AC,HL				* LD A,H
+z7C:*	LD_lh	AC,HL				* LD A,H
+	move.w	HL,-(sp)
+	move.b	(sp)+,AC
+	cmpi.b	#$b5,(aPC) * OR L
+	bne	@f
+	addq.w	#1,aPC
+	or.b	HL,AC			*  4
+	move	sr,FR			*  6
+	moveq	#%0000_1100,d1		*  4
+	and.w	d1,FR			*  4
+	move.b	AC,(aBS)		*  8
+@@:	NEXT2				* 40
 
 z7D:	LD_ll	AC,HL				* LD A,L
 
 z7E:	LD_lHL	AC				* LD A,(HL)
 
-z7F:	NEXT2				* 40	* LD A,A	40(10)		4.0
+z7F:
+	NEXT2_				* 40	* LD A,A	40(10)		4.0
 
 *---------------------------------------
 *
@@ -2759,7 +2879,7 @@ CB_FF:	SET_l	7,AC				* SET 7,A
 *	       ED xx (+52)		*
 *---------------------------------------*
 
-HL	set	d7
+HL	reg	d7
 F_IXY	set	0
 F_XYCB	set	0
 				if F_ROM=0
@@ -3407,7 +3527,7 @@ SKeED2:	NEXT				* 44
 *	   Reg.IX  DD xx (+52)		*
 *---------------------------------------*
 
-HL	set	XY
+HL	reg	XY
 F_IXY	set	1
 F_XYCB	set	0
 				if F_ROM=0
@@ -3437,12 +3557,28 @@ DD_56:	LD_hHL	DE				* LD D,(IX+d)
 DD_5C:	LD_lh	DE,HL				* LD E,IXH
 DD_5D:	LD_ll	DE,HL				* LD E,IXL
 DD_5E:	LD_lHL	DE				* LD E,(IX+d)
+
+DD_60:	LD_hh	HL,BC				* LD IXH,B
+DD_61:	LD_hl	HL,BC				* LD IXH,C
+DD_62:	LD_hh	HL,DE				* LD IXH,D
+DD_63:	LD_hl	HL,DE				* LD IXH,E
+
 DD_64:	LD_hh	d7,HL				* LD H,IXH
 DD_65:	LD_hl	d7,HL				* LD H,IXL
 DD_66:	LD_hHL	d7				* LD H,(IX+d)
+
+DD_67:	LD_hl	HL,AC				* LD IXH,A
+DD_68:	LD_lh	HL,BC				* LD IXL,B
+DD_69:	LD_ll	HL,BC				* LD IXL,C
+DD_6A:	LD_lh	HL,DE				* LD IXL,D
+DD_6B:	LD_ll	HL,DE				* LD IXL,E
+
 DD_6C:	LD_lh	d7,HL				* LD L,IXH
 DD_6D:	LD_ll	d7,HL				* LD L,IXL
 DD_6E:	LD_lHL	d7				* LD L,(IX+d)
+
+DD_6F:	LD_ll	HL,AC				* LD IXL,A
+
 DD_7C:	LD_lh	AC,HL				* LD A,IXH
 DD_7D:	LD_ll	AC,HL				* LD A,IXL
 DD_7E:	LD_lHL	AC				* LD A,(IX+d)
@@ -3638,7 +3774,7 @@ DDcFE:	SET_HL	7				* SET 7,(IX+d)
 *	   Reg.IY  FD xx (+60)		*
 *---------------------------------------*
 
-HL	set	XY
+HL	reg	XY
 F_IXY	set	2
 F_XYCB	set	0
 				if F_ROM=0
@@ -3668,12 +3804,28 @@ FD_56:	LD_hHL	DE				* LD D,(IY+d)
 FD_5C:	LD_lh	DE,HL				* LD E,IYH
 FD_5D:	LD_ll	DE,HL				* LD E,IYL
 FD_5E:	LD_lHL	DE				* LD E,(IY+d)
+
+FD_60:	LD_hh	HL,BC				* LD IYH,B
+FD_61:	LD_hl	HL,BC				* LD IYH,C
+FD_62:	LD_hh	HL,DE				* LD IYH,D
+FD_63:	LD_hl	HL,DE				* LD IYH,E
+
 FD_64:	LD_hh	d7,HL				* LD H,IYH
 FD_65:	LD_hl	d7,HL				* LD H,IYL
 FD_66:	LD_hHL	d7				* LD H,(IY+d)
+
+FD_67:	LD_hl	HL,AC				* LD IYH,A
+FD_68:	LD_lh	HL,BC				* LD IYL,B
+FD_69:	LD_ll	HL,BC				* LD IYL,C
+FD_6A:	LD_lh	HL,DE				* LD IYL,D
+FD_6B:	LD_ll	HL,DE				* LD IYL,E
+
 FD_6C:	LD_lh	d7,HL				* LD L,IYH
 FD_6D:	LD_ll	d7,HL				* LD L,IYL
 FD_6E:	LD_lHL	d7				* LD L,(IY+d)
+
+FD_6F:	LD_ll	HL,AC				* LD IXL,A
+
 FD_7C:	LD_lh	AC,HL				* LD A,IYH
 FD_7D:	LD_ll	AC,HL				* LD A,IYL
 FD_7E:	LD_lHL	AC				* LD A,(IY+d)
@@ -3869,7 +4021,7 @@ FDcFE:	SET_HL	7				* SET 7,(IY+d)
 *		 next EI		*
 *---------------------------------------*
 
-HL	set	d7
+HL	reg	d7
 F_IXY	set	0
 F_XYCB	set	0
 				if F_ROM=0
@@ -3892,6 +4044,7 @@ NMI:
 NMI_76:	suba.l	aME,aPC			*  8
 	move.w	aPC,d0			*  4
 	PUSH	d0			* 52+
+
 	lea	$0066(aME),aPC		*  8
 
 	moveq	#0,d1			*  4
@@ -3969,10 +4122,10 @@ A_NX2y:	swap	XY			*  4
 	jmp	(aBS,d0.w)		* 14
 
 
-NEXTA	equ	.loww.(A_NX-A_BAS).w
-NEXT2A	equ	.loww.(A_NX2-A_BAS).w
-NEXTAy	equ	.loww.(A_NXy-A_BAS).w
-NEXT2Ay	equ	.loww.(A_NX2y-A_BAS).w
+NEXTA	reg	.loww.(A_NX-A_BAS).w
+NEXT2A	reg	.loww.(A_NX2-A_BAS).w
+NEXTAy	reg	.loww.(A_NXy-A_BAS).w
+NEXT2Ay	reg	.loww.(A_NX2y-A_BAS).w
 
 
 *---------------------------------------*
@@ -4580,61 +4733,124 @@ T_CB:
 *---------------------------------------*
 
 T_DD:
-	dcb.w	1-$00+$08,NEXT2A
+	dc.w	z00-A_BAS	* DD 00	*
+	dc.w	z01-A_BAS	* DD 01	*
+	dc.w	z02-A_BAS	* DD 02	*
+	dc.w	z03-A_BAS	* DD 03	*
+	dc.w	z04-A_BAS	* DD 04	*
+	dc.w	z05-A_BAS	* DD 05	*
+	dc.w	z06-A_BAS	* DD 06	*
+	dc.w	z07-A_BAS	* DD 07	*
+	dc.w	z08-A_BAS	* DD 08	*
 	dc.w	DD_09-A_BAS	* DD 09		ADD	IX,BC
-	dcb.w	1-$0A+$18,NEXT2A
+	dc.w	z0A-A_BAS	* DD 0A	*
+	dc.w	z0B-A_BAS	* DD 0B	*
+	dc.w	z0C-A_BAS	* DD 0C	*
+	dc.w	z0D-A_BAS	* DD 0D	*
+	dc.w	z0E-A_BAS	* DD 0E	*
+	dc.w	z0F-A_BAS	* DD 0F	*
 
+	dc.w	z10-A_BAS	* DD 10	*
+	dc.w	z11-A_BAS	* DD 11	*
+	dc.w	z12-A_BAS	* DD 12	*
+	dc.w	z13-A_BAS	* DD 13	*
+	dc.w	z14-A_BAS	* DD 14	*
+	dc.w	z15-A_BAS	* DD 15	*
+	dc.w	z16-A_BAS	* DD 16	*
+	dc.w	z17-A_BAS	* DD 17	*
+	dc.w	z18-A_BAS	* DD 18	*
 	dc.w	DD_19-A_BAS	* DD 19		ADD	IX,DE
-	dcb.w	1-$1A+$20,NEXT2A
+	dc.w	z1A-A_BAS	* DD 1A	*
+	dc.w	z1B-A_BAS	* DD 1B	*
+	dc.w	z1C-A_BAS	* DD 1C	*
+	dc.w	z1D-A_BAS	* DD 1D	*
+	dc.w	z1E-A_BAS	* DD 1E	*
+	dc.w	z1F-A_BAS	* DD 1F	*
 
+	dc.w	z20-A_BAS	* DD 20	*
 	dc.w	DD_21-A_BAS	* DD 21		LD	IX,nn
 	dc.w	DD_22-A_BAS	* DD 22		LD	(nn),IX
 	dc.w	DD_23-A_BAS	* DD 23		INC	IX
 	dc.w	DD_24-A_BAS	* DD 24		INC	IXH		*
 	dc.w	DD_25-A_BAS	* DD 25		DEC	IXH		*
 	dc.w	DD_26-A_BAS	* DD 26		LD	IXH,n		*
-	dcb.w	1-$27+$28,NEXT2A
+	dc.w	z27-A_BAS	* DD 27	*
+	dc.w	z28-A_BAS	* DD 28	*
 	dc.w	DD_29-A_BAS	* DD 29		ADD	IX,IX
 	dc.w	DD_2A-A_BAS	* DD 2A		LD	IX,(nn)
 	dc.w	DD_2B-A_BAS	* DD 2B		DEC	IX
 	dc.w	DD_2C-A_BAS	* DD 2C		INC	IXL		*
 	dc.w	DD_2D-A_BAS	* DD 2D		DEC	IXL		*
 	dc.w	DD_2E-A_BAS	* DD 2E		LD	IXL,n		*
-	dcb.w	1-$2F+$33,NEXT2A
+	dc.w	z2F-A_BAS	* DD 2F	*
 
+	dc.w	z30-A_BAS	* DD 30	*
+	dc.w	z31-A_BAS	* DD 31	*
+	dc.w	z32-A_BAS	* DD 32	*
+	dc.w	z33-A_BAS	* DD 33	*
 	dc.w	DD_34-A_BAS	* DD 34		INC	(IX+d)
 	dc.w	DD_35-A_BAS	* DD 35		DEC	(IX+d)
 	dc.w	DD_36-A_BAS	* DD 36		LD	(IX+d),n
-	dcb.w	1-$37+$38,NEXT2A
+	dc.w	z37-A_BAS	* DD 37	*
+	dc.w	z38-A_BAS	* DD 38	*
 	dc.w	DD_39-A_BAS	* DD 39		ADD	IX,SP
-	dcb.w	1-$3A+$43,NEXT2A
+	dc.w	z3A-A_BAS	* DD 3A	*
+	dc.w	z3B-A_BAS	* DD 3B	*
+	dc.w	z3C-A_BAS	* DD 3C	*
+	dc.w	z3D-A_BAS	* DD 3D	*
+	dc.w	z3E-A_BAS	* DD 3E	*
+	dc.w	z3F-A_BAS	* DD 3F	*
 
+	dc.w	z40-A_BAS	* DD 40	*
+	dc.w	z41-A_BAS	* DD 41	*
+	dc.w	z42-A_BAS	* DD 42	*
+	dc.w	z43-A_BAS	* DD 43	*
 	dc.w	DD_44-A_BAS	* DD 44		LD	B,IXH		*
 	dc.w	DD_45-A_BAS	* DD 45		LD	B,IXL		*
 	dc.w	DD_46-A_BAS	* DD 46		LD	B,(IX+d)
-	dcb.w	1-$47+$4B,NEXT2A
+	dc.w	z47-A_BAS	* DD 47	*
+	dc.w	z48-A_BAS	* DD 48	*
+	dc.w	z49-A_BAS	* DD 49	*
+	dc.w	z4A-A_BAS	* DD 4A	*
+	dc.w	z4B-A_BAS	* DD 4B	*
 	dc.w	DD_4C-A_BAS	* DD 4C		LD	C,IXH		*
 	dc.w	DD_4D-A_BAS	* DD 4D		LD	C,IXL		*
 	dc.w	DD_4E-A_BAS	* DD 4E		LD	C,(IX+d)
-	dcb.w	1-$4F+$53,NEXT2A
+	dc.w	z4F-A_BAS	* DD 4F	*
 
+	dc.w	z50-A_BAS	* DD 50	*
+	dc.w	z51-A_BAS	* DD 51	*
+	dc.w	z52-A_BAS	* DD 52	*
+	dc.w	z53-A_BAS	* DD 53	*
 	dc.w	DD_54-A_BAS	* DD 54		LD	D,IXH		*
 	dc.w	DD_55-A_BAS	* DD 55		LD	D,IXL		*
 	dc.w	DD_56-A_BAS	* DD 56		LD	D,(IX+d)
-	dcb.w	1-$57+$5B,NEXT2A
+	dc.w	z57-A_BAS	* DD 57	*
+	dc.w	z58-A_BAS	* DD 58	*
+	dc.w	z59-A_BAS	* DD 59	*
+	dc.w	z5A-A_BAS	* DD 5A	*
+	dc.w	z5B-A_BAS	* DD 5B	*
 	dc.w	DD_5C-A_BAS	* DD 5C		LD	E,IXH		*
 	dc.w	DD_5D-A_BAS	* DD 5D		LD	E,IXL		*
 	dc.w	DD_5E-A_BAS	* DD 5E		LD	E,(IX+d)
-	dcb.w	1-$5F+$63,NEXT2A
+	dc.w	z5F-A_BAS	* DD 5F	*
 
+	dc.w	DD_60-A_BAS	* DD 60		LD	B,IXH		*
+	dc.w	DD_61-A_BAS	* DD 61		LD	C,IXH		*
+	dc.w	DD_62-A_BAS	* DD 62		LD	D,IXH		*
+	dc.w	DD_63-A_BAS	* DD 63		LD	E,IXH		*
 	dc.w	DD_64-A_BAS	* DD 64		LD	H,IXH		*
 	dc.w	DD_65-A_BAS	* DD 65		LD	H,IXL		*
-	dc.w	DD_66-A_BAS	* DD 66		LD	H,(IX+d)
-	dcb.w	1-$67+$6B,NEXT2A
+	dc.w	DD_66-A_BAS	* DD 66		LD	H,(IX+d)	*
+	dc.w	DD_67-A_BAS	* DD 67		LD	A,IXH		*
+	dc.w	DD_68-A_BAS	* DD 68		LD	B,IXL		*
+	dc.w	DD_69-A_BAS	* DD 69		LD	C,IXL		*
+	dc.w	DD_6A-A_BAS	* DD 6A		LD	D,IXL		*
+	dc.w	DD_6B-A_BAS	* DD 6B		LD	E,IXL		*
 	dc.w	DD_6C-A_BAS	* DD 6C		LD	L,IXH		*
 	dc.w	DD_6D-A_BAS	* DD 6D		LD	L,IXL		*
-	dc.w	DD_6E-A_BAS	* DD 6E		LD	L,(IX+d)
-	dcb.w	1-$6F+$6F,NEXT2A
+	dc.w	DD_6E-A_BAS	* DD 6E		LD	L,(IX+d)	*
+	dc.w	DD_6F-A_BAS	* DD 6F		LD	A,IXL		*
 
 	dc.w	DD_70-A_BAS	* DD 70		LD	(IX+d),B
 	dc.w	DD_71-A_BAS	* DD 71		LD	(IX+d),C
@@ -4642,65 +4858,152 @@ T_DD:
 	dc.w	DD_73-A_BAS	* DD 73		LD	(IX+d),E
 	dc.w	DD_74-A_BAS	* DD 74		LD	(IX+d),H
 	dc.w	DD_75-A_BAS	* DD 75		LD	(IX+d),L
-	dcb.w	1-$76+$76,NEXT2A
+	dc.w	z76-A_BAS	* DD 76	*
 	dc.w	DD_77-A_BAS	* DD 77		LD	(IX+d),A
-	dcb.w	1-$78+$7B,NEXT2A
+	dc.w	z78-A_BAS	* DD 78	*
+	dc.w	z79-A_BAS	* DD 79	*
+	dc.w	z7A-A_BAS	* DD 7A	*
+	dc.w	z7B-A_BAS	* DD 7B	*
 	dc.w	DD_7C-A_BAS	* DD 7C		LD	A,IXH		*
 	dc.w	DD_7D-A_BAS	* DD 7D		LD	A,IXL		*
 	dc.w	DD_7E-A_BAS	* DD 7E		LD	A,(IX+d)
-	dcb.w	1-$7F+$7F,NEXT2A
+	dc.w	z7F-A_BAS	* DD 7F	*
 
-	dcb.w	1-$80+$83,NEXTA
+	dc.w	z80-A_BAS	* DD 80	*
+	dc.w	z81-A_BAS	* DD 81	*
+	dc.w	z82-A_BAS	* DD 82	*
+	dc.w	z83-A_BAS	* DD 83	*
 	dc.w	DD_84-A_BAS	* DD 84		ADD	A,IXH		*
 	dc.w	DD_85-A_BAS	* DD 85		ADD	A,IXL		*
 	dc.w	DD_86-A_BAS	* DD 86		ADD	A,(IX+d)
-	dcb.w	1-$87+$8B,NEXTA
+	dc.w	z87-A_BAS	* DD 87	*
+	dc.w	z88-A_BAS	* DD 88	*
+	dc.w	z89-A_BAS	* DD 89	*
+	dc.w	z8A-A_BAS	* DD 8A	*
+	dc.w	z8B-A_BAS	* DD 8B	*
 	dc.w	DD_8C-A_BAS	* DD 8C		ADC	A,IXH		*
 	dc.w	DD_8D-A_BAS	* DD 8D		ADC	A,IXL		*
 	dc.w	DD_8E-A_BAS	* DD 8E		ADC	A,(IX+d)
-	dcb.w	1-$8F+$93,NEXTA
+	dc.w	z8F-A_BAS	* DD 8F	*
 
+	dc.w	z90-A_BAS	* DD 90	*
+	dc.w	z91-A_BAS	* DD 91	*
+	dc.w	z92-A_BAS	* DD 92	*
+	dc.w	z93-A_BAS	* DD 93	*
 	dc.w	DD_94-A_BAS	* DD 94		SUB	IXH		*
 	dc.w	DD_95-A_BAS	* DD 95		SUB	IXL		*
 	dc.w	DD_96-A_BAS	* DD 96		SUB	(IX+d)
-	dcb.w	1-$97+$9B,NEXTA
+	dc.w	z97-A_BAS	* DD 97	*
+	dc.w	z98-A_BAS	* DD 98	*
+	dc.w	z99-A_BAS	* DD 99	*
+	dc.w	z9A-A_BAS	* DD 9A	*
+	dc.w	z9B-A_BAS	* DD 9B	*
 	dc.w	DD_9C-A_BAS	* DD 9C		SBC	A,IXH		*
 	dc.w	DD_9D-A_BAS	* DD 9D		SBC	A,IXL		*
 	dc.w	DD_9E-A_BAS	* DD 9E		SBC	A,(IX+d)
-	dcb.w	1-$9F+$A3,NEXTA
+	dc.w	z9F-A_BAS	* DD 9F	*
 
+	dc.w	zA0-A_BAS	* DD A0	*
+	dc.w	zA1-A_BAS	* DD A1	*
+	dc.w	zA2-A_BAS	* DD A2	*
+	dc.w	zA3-A_BAS	* DD A3	*
 	dc.w	DD_A4-A_BAS	* DD A4		AND	IXH		*
 	dc.w	DD_A5-A_BAS	* DD A5		AND	IXL		*
 	dc.w	DD_A6-A_BAS	* DD A6		AND	(IX+d)	
-	dcb.w	1-$A7+$AB,NEXTA
+	dc.w	zA7-A_BAS	* DD A7	*
+	dc.w	zA8-A_BAS	* DD A8	*
+	dc.w	zA9-A_BAS	* DD A9	*
+	dc.w	zAA-A_BAS	* DD AA	*
+	dc.w	zAB-A_BAS	* DD AB	*
 	dc.w	DD_AC-A_BAS	* DD AC		XOR	IXH		*
 	dc.w	DD_AD-A_BAS	* DD AD		XOR	IXL		*
 	dc.w	DD_AE-A_BAS	* DD AE		XOR	(IX+d)
-	dcb.w	1-$AF+$B3,NEXTA
+	dc.w	zAF-A_BAS	* DD AF	*
 
+	dc.w	zB0-A_BAS	* DD B0	*
+	dc.w	zB1-A_BAS	* DD B1	*
+	dc.w	zB2-A_BAS	* DD B2	*
+	dc.w	zB3-A_BAS	* DD B3	*
 	dc.w	DD_B4-A_BAS	* DD B4		OR	IXH		*
 	dc.w	DD_B5-A_BAS	* DD B5		OR	IXL		*
 	dc.w	DD_B6-A_BAS	* DD B6		OR	(IX+d)
-	dcb.w	1-$B7+$BB,NEXTA
+	dc.w	zB7-A_BAS	* DD B7	*
+	dc.w	zB8-A_BAS	* DD B8	*
+	dc.w	zB9-A_BAS	* DD B9	*
+	dc.w	zBA-A_BAS	* DD BA	*
+	dc.w	zBB-A_BAS	* DD BB	*
 	dc.w	DD_BC-A_BAS	* DD BC		CP	IXH		*
 	dc.w	DD_BD-A_BAS	* DD BD		CP	IXL		*
 	dc.w	DD_BE-A_BAS	* DD BE		CP	(IX+d)
-	dcb.w	1-$BF+$CA,NEXTA
+	dc.w	zBF-A_BAS	* DD BF	*
 
+	dc.w	zC0-A_BAS	* DD C0	*
+	dc.w	zC1-A_BAS	* DD C1	*
+	dc.w	zC2-A_BAS	* DD C2	*
+	dc.w	zC3-A_BAS	* DD C3	*
+	dc.w	zC4-A_BAS	* DD C4	*
+	dc.w	zC5-A_BAS	* DD C5	*
+	dc.w	zC6-A_BAS	* DD C6	*
+	dc.w	zC7-A_BAS	* DD C7	*
+	dc.w	zC8-A_BAS	* DD C8	*
+	dc.w	zC9-A_BAS	* DD C9	*
+	dc.w	zCA-A_BAS	* DD CA	*
 	dc.w	DD_CB-A_BAS	* DD CB		$DD CB
-	dcb.w	1-$CC+$E0,NEXTA
+	dc.w	zCC-A_BAS	* DD CC	*
+	dc.w	zCD-A_BAS	* DD CD	*
+	dc.w	zCE-A_BAS	* DD CE	*
+	dc.w	zCF-A_BAS	* DD CF	*
 
+	dc.w	zD0-A_BAS	* DD D0	*
+	dc.w	zD1-A_BAS	* DD D1	*
+	dc.w	zD2-A_BAS	* DD D2	*
+	dc.w	zD3-A_BAS	* DD D3	*
+	dc.w	zD4-A_BAS	* DD D4	*
+	dc.w	zD5-A_BAS	* DD D5	*
+	dc.w	zD6-A_BAS	* DD D6	*
+	dc.w	zD7-A_BAS	* DD D7	*
+	dc.w	zD8-A_BAS	* DD D8	*
+	dc.w	zD9-A_BAS	* DD D9	*
+	dc.w	zDA-A_BAS	* DD DA	*
+	dc.w	zDB-A_BAS	* DD DB	*
+	dc.w	zDC-A_BAS	* DD DC	*
+	dc.w	zDD-A_BAS	* DD DD	*
+	dc.w	zDE-A_BAS	* DD DE	*
+	dc.w	zDF-A_BAS	* DD DF	*
+
+	dc.w	zE0-A_BAS	* DD E0	*
 	dc.w	DD_E1-A_BAS	* DD E1		POP	IX
-	dcb.w	1-$E2+$E2,NEXTA
+	dc.w	zE2-A_BAS	* DD E2	*
 	dc.w	DD_E3-A_BAS	* DD E3		EX	(SP),IX
-	dcb.w	1-$E4+$E4,NEXTA
+	dc.w	zE4-A_BAS	* DD E4	*
 	dc.w	DD_E5-A_BAS	* DD E5		PUSH	IX
-	dcb.w	1-$E6+$E8,NEXTA
+	dc.w	zE6-A_BAS	* DD E6	*
+	dc.w	zE7-A_BAS	* DD E7	*
+	dc.w	zE8-A_BAS	* DD E8	*
 	dc.w	DD_E9-A_BAS	* DD E9		JP	(IX)
-	dcb.w	1-$EA+$F8,NEXTA
+	dc.w	zEA-A_BAS	* DD EA	*
+	dc.w	zEB-A_BAS	* DD EB	*
+	dc.w	zEC-A_BAS	* DD EC	*
+	dc.w	zED-A_BAS	* DD ED	*
+	dc.w	zEE-A_BAS	* DD EE	*
+	dc.w	zEF-A_BAS	* DD EF	*
 
+	dc.w	zF0-A_BAS	* DD F0	*
+	dc.w	zF1-A_BAS	* DD F1	*
+	dc.w	zF2-A_BAS	* DD F2	*
+	dc.w	zF3-A_BAS	* DD F3	*
+	dc.w	zF4-A_BAS	* DD F4	*
+	dc.w	zF5-A_BAS	* DD F5	*
+	dc.w	zF6-A_BAS	* DD F6	*
+	dc.w	zF7-A_BAS	* DD F7	*
+	dc.w	zF8-A_BAS	* DD F8	*
 	dc.w	DD_F9-A_BAS	* DD F9		LD	SP,IX
-	dcb.w	1-$FA+$FF,NEXTA
+	dc.w	zFA-A_BAS	* DD FA	*
+	dc.w	zFB-A_BAS	* DD FB	*
+	dc.w	zFC-A_BAS	* DD FC	*
+	dc.w	zFD-A_BAS	* DD FD	*
+	dc.w	zFE-A_BAS	* DD FE	*
+	dc.w	zFF-A_BAS	* DD FF	*
 
 T_DDc:
 	dcb.w	1-$00+$03,NEXTA
@@ -4851,61 +5154,124 @@ T_DDc:
 *---------------------------------------*
 
 T_FD:
-	dcb.w	1-$00+$08,NEXT2Ay
+	dc.w	z00-A_BAS	* FD 00	*
+	dc.w	z01-A_BAS	* FD 01	*
+	dc.w	z02-A_BAS	* FD 02	*
+	dc.w	z03-A_BAS	* FD 03	*
+	dc.w	z04-A_BAS	* FD 04	*
+	dc.w	z05-A_BAS	* FD 05	*
+	dc.w	z06-A_BAS	* FD 06	*
+	dc.w	z07-A_BAS	* FD 07	*
+	dc.w	z08-A_BAS	* FD 08	*
 	dc.w	FD_09-A_BAS	* FD 09		ADD	IY,BC
-	dcb.w	1-$0A+$18,NEXT2Ay
+	dc.w	z0A-A_BAS	* FD 0A	*
+	dc.w	z0B-A_BAS	* FD 0B	*
+	dc.w	z0C-A_BAS	* FD 0C	*
+	dc.w	z0D-A_BAS	* FD 0D	*
+	dc.w	z0E-A_BAS	* FD 0E	*
+	dc.w	z0F-A_BAS	* FD 0F	*
 
+	dc.w	z10-A_BAS	* FD 10	*
+	dc.w	z11-A_BAS	* FD 11	*
+	dc.w	z12-A_BAS	* FD 12	*
+	dc.w	z13-A_BAS	* FD 13	*
+	dc.w	z14-A_BAS	* FD 14	*
+	dc.w	z15-A_BAS	* FD 15	*
+	dc.w	z16-A_BAS	* FD 16	*
+	dc.w	z17-A_BAS	* FD 17	*
+	dc.w	z18-A_BAS	* FD 18	*
 	dc.w	FD_19-A_BAS	* FD 19		ADD	IY,DE
-	dcb.w	1-$1A+$20,NEXT2Ay
+	dc.w	z1A-A_BAS	* FD 1A	*
+	dc.w	z1B-A_BAS	* FD 1B	*
+	dc.w	z1C-A_BAS	* FD 1C	*
+	dc.w	z1D-A_BAS	* FD 1D	*
+	dc.w	z1E-A_BAS	* FD 1E	*
+	dc.w	z1F-A_BAS	* FD 1F	*
 
+	dc.w	z20-A_BAS	* FD 20	*
 	dc.w	FD_21-A_BAS	* FD 21		LD	IY,nn
 	dc.w	FD_22-A_BAS	* FD 22		LD	(nn),IY
 	dc.w	FD_23-A_BAS	* FD 23		INC	IY
 	dc.w	FD_24-A_BAS	* FD 24		INC	IYH		*
 	dc.w	FD_25-A_BAS	* FD 25		DEC	IYH		*
 	dc.w	FD_26-A_BAS	* FD 26		LD	IYH,n		*
-	dcb.w	1-$27+$28,NEXT2Ay
+	dc.w	z27-A_BAS	* FD 27	*
+	dc.w	z28-A_BAS	* FD 28	*
 	dc.w	FD_29-A_BAS	* FD 29		ADD	IY,IY
 	dc.w	FD_2A-A_BAS	* FD 2A		LD	IY,(nn)
 	dc.w	FD_2B-A_BAS	* FD 2B		DEC	IY
 	dc.w	FD_2C-A_BAS	* FD 2C		INC	IYL		*
 	dc.w	FD_2D-A_BAS	* FD 2D		DEC	IYL		*
 	dc.w	FD_2E-A_BAS	* FD 2E		LD	IYL,n		*
-	dcb.w	1-$2F+$33,NEXT2Ay
+	dc.w	z2F-A_BAS	* FD 2F	*
 
+	dc.w	z30-A_BAS	* FD 30	*
+	dc.w	z31-A_BAS	* FD 31	*
+	dc.w	z32-A_BAS	* FD 32	*
+	dc.w	z33-A_BAS	* FD 33	*
 	dc.w	FD_34-A_BAS	* FD 34		INC	(IY+d)
 	dc.w	FD_35-A_BAS	* FD 35		DEC	(IY+d)
 	dc.w	FD_36-A_BAS	* FD 36		LD	(IY+d),n
-	dcb.w	1-$37+$38,NEXT2Ay
+	dc.w	z37-A_BAS	* FD 37	*
+	dc.w	z38-A_BAS	* FD 38	*
 	dc.w	FD_39-A_BAS	* FD 39		ADD	IY,SP
-	dcb.w	1-$3A+$43,NEXT2Ay
+	dc.w	z3A-A_BAS	* FD 3A	*
+	dc.w	z3B-A_BAS	* FD 3B	*
+	dc.w	z3C-A_BAS	* FD 3C	*
+	dc.w	z3D-A_BAS	* FD 3D	*
+	dc.w	z3E-A_BAS	* FD 3E	*
+	dc.w	z3F-A_BAS	* FD 3F	*
 
+	dc.w	z40-A_BAS	* FD 40	*
+	dc.w	z41-A_BAS	* FD 41	*
+	dc.w	z42-A_BAS	* FD 42	*
+	dc.w	z43-A_BAS	* FD 43	*
 	dc.w	FD_44-A_BAS	* FD 44		LD	B,IYH		*
 	dc.w	FD_45-A_BAS	* FD 45		LD	B,IYL		*
 	dc.w	FD_46-A_BAS	* FD 46		LD	B,(IY+d)
-	dcb.w	1-$47+$4B,NEXT2Ay
+	dc.w	z47-A_BAS	* FD 47	*
+	dc.w	z48-A_BAS	* FD 48	*
+	dc.w	z49-A_BAS	* FD 49	*
+	dc.w	z4A-A_BAS	* FD 4A	*
+	dc.w	z4B-A_BAS	* FD 4B	*
 	dc.w	FD_4C-A_BAS	* FD 4C		LD	C,IYH		*
 	dc.w	FD_4D-A_BAS	* FD 4D		LD	C,IYL		*
 	dc.w	FD_4E-A_BAS	* FD 4E		LD	C,(IY+d)
-	dcb.w	1-$4F+$53,NEXT2Ay
+	dc.w	z4F-A_BAS	* FD 4F	*
 
+	dc.w	z50-A_BAS	* FD 50	*
+	dc.w	z51-A_BAS	* FD 51	*
+	dc.w	z52-A_BAS	* FD 52	*
+	dc.w	z53-A_BAS	* FD 53	*
 	dc.w	FD_54-A_BAS	* FD 54		LD	D,IYH		*
 	dc.w	FD_55-A_BAS	* FD 55		LD	D,IYL		*
 	dc.w	FD_56-A_BAS	* FD 56		LD	D,(IY+d)
-	dcb.w	1-$57+$5B,NEXT2Ay
+	dc.w	z57-A_BAS	* FD 57	*
+	dc.w	z58-A_BAS	* FD 58	*
+	dc.w	z59-A_BAS	* FD 59	*
+	dc.w	z5A-A_BAS	* FD 5A	*
+	dc.w	z5B-A_BAS	* FD 5B	*
 	dc.w	FD_5C-A_BAS	* FD 5C		LD	E,IYH		*
 	dc.w	FD_5D-A_BAS	* FD 5D		LD	E,IYL		*
 	dc.w	FD_5E-A_BAS	* FD 5E		LD	E,(IY+d)
-	dcb.w	1-$5F+$63,NEXT2Ay
+	dc.w	z5F-A_BAS	* FD 5F	*
 
+	dc.w	FD_60-A_BAS	* FD 60		LD	B,IYH		*
+	dc.w	FD_61-A_BAS	* FD 61		LD	C,IYH		*
+	dc.w	FD_62-A_BAS	* FD 62		LD	D,IYH		*
+	dc.w	FD_63-A_BAS	* FD 63		LD	E,IYH		*
 	dc.w	FD_64-A_BAS	* FD 64		LD	H,IYH		*
 	dc.w	FD_65-A_BAS	* FD 65		LD	H,IYL		*
-	dc.w	FD_66-A_BAS	* FD 66		LD	H,(IY+d)
-	dcb.w	1-$67+$6B,NEXT2Ay
+	dc.w	FD_66-A_BAS	* FD 66		LD	H,(IY+d)	*
+	dc.w	FD_67-A_BAS	* FD 67		LD	A,IYH		*
+	dc.w	FD_68-A_BAS	* FD 68		LD	B,IYL		*
+	dc.w	FD_69-A_BAS	* FD 69		LD	C,IYL		*
+	dc.w	FD_6A-A_BAS	* FD 6A		LD	D,IYL		*
+	dc.w	FD_6B-A_BAS	* FD 6B		LD	E,IYL		*
 	dc.w	FD_6C-A_BAS	* FD 6C		LD	L,IYH		*
 	dc.w	FD_6D-A_BAS	* FD 6D		LD	L,IYL		*
-	dc.w	FD_6E-A_BAS	* FD 6E		LD	L,(IY+d)
-	dcb.w	1-$6F+$6F,NEXT2Ay
+	dc.w	FD_6E-A_BAS	* FD 6E		LD	L,(IY+d)	*
+	dc.w	FD_6F-A_BAS	* FD 6F		LD	A,IYL		*
 
 	dc.w	FD_70-A_BAS	* FD 70		LD	(IY+d),B
 	dc.w	FD_71-A_BAS	* FD 71		LD	(IY+d),C
@@ -4913,65 +5279,152 @@ T_FD:
 	dc.w	FD_73-A_BAS	* FD 73		LD	(IY+d),E
 	dc.w	FD_74-A_BAS	* FD 74		LD	(IY+d),H
 	dc.w	FD_75-A_BAS	* FD 75		LD	(IY+d),L
-	dcb.w	1-$76+$76,NEXT2Ay
+	dc.w	z76-A_BAS	* FD 76	*
 	dc.w	FD_77-A_BAS	* FD 77		LD	(IY+d),A
-	dcb.w	1-$78+$7B,NEXT2Ay
+	dc.w	z78-A_BAS	* FD 78	*
+	dc.w	z79-A_BAS	* FD 79	*
+	dc.w	z7A-A_BAS	* FD 7A	*
+	dc.w	z7B-A_BAS	* FD 7B	*
 	dc.w	FD_7C-A_BAS	* FD 7C		LD	A,IYH		*
 	dc.w	FD_7D-A_BAS	* FD 7D		LD	A,IYL		*
 	dc.w	FD_7E-A_BAS	* FD 7E		LD	A,(IY+d)
-	dcb.w	1-$7F+$7F,NEXT2Ay
+	dc.w	z7F-A_BAS	* FD 7F	*
 
-	dcb.w	1-$80+$83,NEXTAy
+	dc.w	z80-A_BAS	* FD 80	*
+	dc.w	z81-A_BAS	* FD 81	*
+	dc.w	z82-A_BAS	* FD 82	*
+	dc.w	z83-A_BAS	* FD 83	*
 	dc.w	FD_84-A_BAS	* FD 84		ADD	A,IYH		*
 	dc.w	FD_85-A_BAS	* FD 85		ADD	A,IYL		*
 	dc.w	FD_86-A_BAS	* FD 86		ADD	A,(IY+d)
-	dcb.w	1-$87+$8B,NEXTAy
+	dc.w	z87-A_BAS	* FD 87	*
+	dc.w	z88-A_BAS	* FD 88	*
+	dc.w	z89-A_BAS	* FD 89	*
+	dc.w	z8A-A_BAS	* FD 8A	*
+	dc.w	z8B-A_BAS	* FD 8B	*
 	dc.w	FD_8C-A_BAS	* FD 8C		ADC	A,IYH		*
 	dc.w	FD_8D-A_BAS	* FD 8D		ADC	A,IYL		*
 	dc.w	FD_8E-A_BAS	* FD 8E		ADC	A,(IY+d)
-	dcb.w	1-$8F+$93,NEXTAy
+	dc.w	z8F-A_BAS	* FD 8F	*
 
+	dc.w	z90-A_BAS	* FD 90	*
+	dc.w	z91-A_BAS	* FD 91	*
+	dc.w	z92-A_BAS	* FD 92	*
+	dc.w	z93-A_BAS	* FD 93	*
 	dc.w	FD_94-A_BAS	* FD 94		SUB	IYH		*
 	dc.w	FD_95-A_BAS	* FD 95		SUB	IYL		*
 	dc.w	FD_96-A_BAS	* FD 96		SUB	(IY+d)
-	dcb.w	1-$97+$9B,NEXTAy
+	dc.w	z97-A_BAS	* FD 97	*
+	dc.w	z98-A_BAS	* FD 98	*
+	dc.w	z99-A_BAS	* FD 99	*
+	dc.w	z9A-A_BAS	* FD 9A	*
+	dc.w	z9B-A_BAS	* FD 9B	*
 	dc.w	FD_9C-A_BAS	* FD 9C		SBC	A,IYH		*
 	dc.w	FD_9D-A_BAS	* FD 9D		SBC	A,IYL		*
 	dc.w	FD_9E-A_BAS	* FD 9E		SBC	A,(IY+d)
-	dcb.w	1-$9F+$A3,NEXTAy
+	dc.w	z9F-A_BAS	* FD 9F	*
 
+	dc.w	zA0-A_BAS	* FD A0	*
+	dc.w	zA1-A_BAS	* FD A1	*
+	dc.w	zA2-A_BAS	* FD A2	*
+	dc.w	zA3-A_BAS	* FD A3	*
 	dc.w	FD_A4-A_BAS	* FD A4		AND	IYH		*
 	dc.w	FD_A5-A_BAS	* FD A5		AND	IYL		*
 	dc.w	FD_A6-A_BAS	* FD A6		AND	(IY+d)	
-	dcb.w	1-$A7+$AB,NEXTAy
+	dc.w	zA7-A_BAS	* FD A7	*
+	dc.w	zA8-A_BAS	* FD A8	*
+	dc.w	zA9-A_BAS	* FD A9	*
+	dc.w	zAA-A_BAS	* FD AA	*
+	dc.w	zAB-A_BAS	* FD AB	*
 	dc.w	FD_AC-A_BAS	* FD AC		XOR	IYH		*
 	dc.w	FD_AD-A_BAS	* FD AD		XOR	IYL		*
 	dc.w	FD_AE-A_BAS	* FD AE		XOR	(IY+d)
-	dcb.w	1-$AF+$B3,NEXTAy
+	dc.w	zAF-A_BAS	* FD AF	*
 
+	dc.w	zB0-A_BAS	* FD B0	*
+	dc.w	zB1-A_BAS	* FD B1	*
+	dc.w	zB2-A_BAS	* FD B2	*
+	dc.w	zB3-A_BAS	* FD B3	*
 	dc.w	FD_B4-A_BAS	* FD B4		OR	IYH		*
 	dc.w	FD_B5-A_BAS	* FD B5		OR	IYL		*
 	dc.w	FD_B6-A_BAS	* FD B6		OR	(IY+d)
-	dcb.w	1-$B7+$BB,NEXTAy
+	dc.w	zB7-A_BAS	* FD B7	*
+	dc.w	zB8-A_BAS	* FD B8	*
+	dc.w	zB9-A_BAS	* FD B9	*
+	dc.w	zBA-A_BAS	* FD BA	*
+	dc.w	zBB-A_BAS	* FD BB	*
 	dc.w	FD_BC-A_BAS	* FD BC		CP	IYH		*
 	dc.w	FD_BD-A_BAS	* FD BD		CP	IYL		*
 	dc.w	FD_BE-A_BAS	* FD BE		CP	(IY+d)
-	dcb.w	1-$BF+$CA,NEXTAy
+	dc.w	zBF-A_BAS	* FD BF	*
 
+	dc.w	zC0-A_BAS	* FD C0	*
+	dc.w	zC1-A_BAS	* FD C1	*
+	dc.w	zC2-A_BAS	* FD C2	*
+	dc.w	zC3-A_BAS	* FD C3	*
+	dc.w	zC4-A_BAS	* FD C4	*
+	dc.w	zC5-A_BAS	* FD C5	*
+	dc.w	zC6-A_BAS	* FD C6	*
+	dc.w	zC7-A_BAS	* FD C7	*
+	dc.w	zC8-A_BAS	* FD C8	*
+	dc.w	zC9-A_BAS	* FD C9	*
+	dc.w	zCA-A_BAS	* FD CA	*
 	dc.w	FD_CB-A_BAS	* FD CB		$FD CB
-	dcb.w	1-$CC+$E0,NEXTAy
+	dc.w	zCC-A_BAS	* FD CC	*
+	dc.w	zCD-A_BAS	* FD CD	*
+	dc.w	zCE-A_BAS	* FD CE	*
+	dc.w	zCF-A_BAS	* FD CF	*
 
+	dc.w	zD0-A_BAS	* FD D0	*
+	dc.w	zD1-A_BAS	* FD D1	*
+	dc.w	zD2-A_BAS	* FD D2	*
+	dc.w	zD3-A_BAS	* FD D3	*
+	dc.w	zD4-A_BAS	* FD D4	*
+	dc.w	zD5-A_BAS	* FD D5	*
+	dc.w	zD6-A_BAS	* FD D6	*
+	dc.w	zD7-A_BAS	* FD D7	*
+	dc.w	zD8-A_BAS	* FD D8	*
+	dc.w	zD9-A_BAS	* FD D9	*
+	dc.w	zDA-A_BAS	* FD DA	*
+	dc.w	zDB-A_BAS	* FD DB	*
+	dc.w	zDC-A_BAS	* FD DC	*
+	dc.w	zFD-A_BAS	* FD FD	*
+	dc.w	zDE-A_BAS	* FD DE	*
+	dc.w	zDF-A_BAS	* FD DF	*
+
+	dc.w	zE0-A_BAS	* FD E0	*
 	dc.w	FD_E1-A_BAS	* FD E1		POP	IY
-	dcb.w	1-$E2+$E2,NEXTAy
+	dc.w	zE2-A_BAS	* FD E2	*
 	dc.w	FD_E3-A_BAS	* FD E3		EX	(SP),IY
-	dcb.w	1-$E4+$E4,NEXTAy
+	dc.w	zE4-A_BAS	* FD E4	*
 	dc.w	FD_E5-A_BAS	* FD E5		PUSH	IY
-	dcb.w	1-$E6+$E8,NEXTAy
+	dc.w	zE6-A_BAS	* FD E6	*
+	dc.w	zE7-A_BAS	* FD E7	*
+	dc.w	zE8-A_BAS	* FD E8	*
 	dc.w	FD_E9-A_BAS	* FD E9		JP	(IY)
-	dcb.w	1-$EA+$F8,NEXTAy
+	dc.w	zEA-A_BAS	* FD EA	*
+	dc.w	zEB-A_BAS	* FD EB	*
+	dc.w	zEC-A_BAS	* FD EC	*
+	dc.w	zED-A_BAS	* FD ED	*
+	dc.w	zEE-A_BAS	* FD EE	*
+	dc.w	zEF-A_BAS	* FD EF	*
 
+	dc.w	zF0-A_BAS	* FD F0	*
+	dc.w	zF1-A_BAS	* FD F1	*
+	dc.w	zF2-A_BAS	* FD F2	*
+	dc.w	zF3-A_BAS	* FD F3	*
+	dc.w	zF4-A_BAS	* FD F4	*
+	dc.w	zF5-A_BAS	* FD F5	*
+	dc.w	zF6-A_BAS	* FD F6	*
+	dc.w	zF7-A_BAS	* FD F7	*
+	dc.w	zF8-A_BAS	* FD F8	*
 	dc.w	FD_F9-A_BAS	* FD F9		LD	SP,IY
-	dcb.w	1-$FA+$FF,NEXTAy
+	dc.w	zFA-A_BAS	* FD FA	*
+	dc.w	zFB-A_BAS	* FD FB	*
+	dc.w	zFC-A_BAS	* FD FC	*
+	dc.w	zFD-A_BAS	* FD FD	*
+	dc.w	zFE-A_BAS	* FD FE	*
+	dc.w	zFF-A_BAS	* FD FF	*
 
 T_FDc:
 	dcb.w	1-$00+$03,NEXTAy

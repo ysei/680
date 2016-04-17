@@ -1,0 +1,1536 @@
+*************************************************
+*						*
+*	Z80 Disassembler for 68000 Ver 1.00	*
+*						*
+*	Copyright  1994/01/20 GORRY.		*
+*						*
+*************************************************
+
+
+	.cpu	68000
+
+StrCpy		macro	p1
+		.local	l1
+		.local	l2
+		.data
+l1:		dc.b	p1
+		dc.b	0
+		.text
+		lea	l1,a2
+l2:		move.b	(a2)+,(a0)+
+		bne	l2
+		subq.w	#1,a0
+		.endm
+
+StrCpy2		macro	p1
+		.local	l2
+		lea	p1,a2
+l2:		move.b	(a2)+,(a0)+
+		bne	l2
+		subq.w	#1,a0
+		.endm
+
+
+		.bss
+
+DisAsmIndexNo::	ds.b	1
+		.even
+DisMesBuf::	ds.b	256
+TmpDisMesBuf::	ds.b	256
+
+		.text
+
+*標準*****************************************************************************************
+* 00  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |NOP       |LD BC,nn  |LD (BC),A |INC BC    |INC B     |DEC B     |LD B,n    |RLCA      |
+*  1 |EX AF,AF' |ADD HL,BC |LD A,(BC) |DEC BC    |INC C     |DEC C     |LD C,n    |RRCA      |
+*  2 |DJNZ n    |LD DE,nn  |LD (DE),A |INC DE    |INC D     |DEC D     |LD D,n    |RLA       |
+*  3 |JR n      |ADD HL,DE |LD A,(DE) |DEC BC    |INC E     |DEC E     |LD E,n    |RRA       |
+*  4 |JR NZ,n   |LD HL,nn  |LD (nn),HL|INC HL    |INC H     |DEC H     |LD H,n    |DAA       |
+*  5 |JR Z,n    |ADD HL,HL |LD HL,(nn)|DEC HL    |INC L     |DEC L     |LD L,n    |CPL       |
+*  6 |JR NC,n   |LD SP,nn  |LD (nn),A |INC SP    |INC (HL)  |DEC (HL)  |LD (HL),n |SCF       |
+*  7 |JR C,n    |ADD HL,SP |LD A,(nn) |DEC SP    |INC A     |DEC A     |LD A,n    |CCF       |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+* 40  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |LD B,B    |LD B,C    |LD B,D    |LD B,E    |LD B,H    |LD B,L    |LD B,(HL) |LD B,A    |
+*  1 |LD C,B    |LD C,C    |LD C,D    |LD C,E    |LD C,H    |LD C,L    |LD C,(HL) |LD C,A    |
+*  2 |LD D,B    |LD D,C    |LD D,D    |LD D,E    |LD D,H    |LD D,L    |LD D,(HL) |LD D,A    |
+*  3 |LD E,B    |LD E,C    |LD E,D    |LD E,E    |LD E,H    |LD E,L    |LD E,(HL) |LD E,A    |
+*  4 |LD H,B    |LD H,C    |LD H,D    |LD H,E    |LD H,H    |LD H,L    |LD H,(HL) |LD H,A    |
+*  5 |LD L,B    |LD L,C    |LD L,D    |LD L,E    |LD L,H    |LD L,L    |LD L,(HL) |LD L,A    |
+*  6 |LD (HL),B |LD (HL),C |LD (HL),D |LD (HL),E |LD (HL),H |LD (HL),L |HALT      |LD (HL),A |
+*  7 |LD A,B    |LD A,C    |LD A,D    |LD A,E    |LD A,H    |LD A,L    |LD A,(HL) |LD A,A    |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+* 80  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |ADD A,B   |ADD A,C   |ADD A,D   |ADD A,E   |ADD A,H   |ADD A,L   |ADD A,(HL)|ADD A,A   |
+*  1 |ADC A,B   |ADC A,C   |ADC A,D   |ADC A,E   |ADC A,H   |ADC A,L   |ADC A,(HL)|ADC A,A   |
+*  2 |SUB B     |SUB C     |SUB D     |SUB E     |SUB H     |SUB L     |SUB (HL)  |SUB A     |
+*  3 |SBC A,B   |SBC A,C   |SBC A,D   |SBC A,E   |SBC A,H   |SBC A,L   |SBC A,(HL)|SBC A,A   |
+*  4 |AND B     |AND C     |AND D     |AND E     |AND H     |AND L     |AND (HL)  |AND A     |
+*  5 |XOR B     |XOR C     |XOR D     |XOR E     |XOR H     |XOR L     |XOR (HL)  |XOR A     |
+*  6 |OR B      |OR C      |OR D      |OR E      |OR H      |OR L      |OR (HL)   |OR A      |
+*  7 |CP B      |CP C      |CP D      |CP E      |CP H      |CP L      |CP (HL)   |CP A      |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+* C0  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |RET NZ    |POP BC    |JP NZ,nn  |JP nn     |CALL NZ,nn|PUSH BC   |ADD A,n   |RST $00   |
+*  1 |RET Z     |RET       |JP Z,nn   |*CB*      |CALL Z,nn |CALL nn   |ADC A,n   |RST $08   |
+*  2 |RET NC    |POP DE    |JP NC,nn  |OUT (n),A |CALL NC,nn|PUSH DE   |SUB n     |RST $10   |
+*  3 |RET C     |EXX       |JP C,nn   |IN A,(n)  |CALL C,nn |*DD*      |SBC A,n   |RST $18   |
+*  4 |RET PO    |POP HL    |JP PO,nn  |EX (SP),HL|CALL PO,nn|PUSH HL   |AND n     |RST $20   |
+*  5 |RET PE    |JP (HL)   |JP PE,nn  |EX DE,HL  |CALL PE,nn|*ED*      |XOR n     |RST $28   |
+*  6 |RET P     |POP AF    |JP P,nn   |DI        |CALL P,nn |PUSH AF   |OR n      |RST $30   |
+*  7 |RET M     |LD SP,HL  |JP M,nn   |EI        |CALL M,nn |*FD*      |CP n      |RST $38   |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*CB*******************************************************************************************
+* 00  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |RLC B     |RLC C     |RLC D     |RLC E     |RLC H     |RLC L     |RLC (HL)  |RLC A     |
+*  1 |RRC B     |RRC C     |RRC D     |RRC E     |RRC H     |RRC L     |RRC (HL)  |RRC A     |
+*  2 |RL B      |RL C      |RL D      |RL E      |RL H      |RL L      |RL (HL)   |RL A      |
+*  3 |RR B      |RR C      |RR D      |RR E      |RR H      |RR L      |RR (HL)   |RR A      |
+*  4 |SLA B     |SLA C     |SLA D     |SLA E     |SLA H     |SLA L     |SLA (HL)  |SLA A     |
+*  5 |SRA B     |SRA C     |SRA D     |SRA E     |SRA H     |SRA L     |SRA (HL)  |SRA A     |
+*  6 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  7 |SRL B     |SRL C     |SRL D     |SRL E     |SRL H     |SRL L     |SRL (HL)  |SRL A     |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+* 40  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |BIT 0,B   |BIT 0,C   |BIT 0,D   |BIT 0,E   |BIT 0,H   |BIT 0,L   |BIT 0,(HL)|BIT 0,A   |
+*  1 |BIT 1,B   |BIT 1,C   |BIT 1,D   |BIT 1,E   |BIT 1,H   |BIT 1,L   |BIT 1,(HL)|BIT 1,A   |
+*  2 |BIT 2,B   |BIT 2,C   |BIT 2,D   |BIT 2,E   |BIT 2,H   |BIT 2,L   |BIT 2,(HL)|BIT 2,A   |
+*  3 |BIT 3,B   |BIT 3,C   |BIT 3,D   |BIT 3,E   |BIT 3,H   |BIT 3,L   |BIT 3,(HL)|BIT 3,A   |
+*  4 |BIT 4,B   |BIT 4,C   |BIT 4,D   |BIT 4,E   |BIT 4,H   |BIT 4,L   |BIT 4,(HL)|BIT 4,A   |
+*  5 |BIT 5,B   |BIT 5,C   |BIT 5,D   |BIT 5,E   |BIT 5,H   |BIT 5,L   |BIT 5,(HL)|BIT 5,A   |
+*  6 |BIT 6,B   |BIT 6,C   |BIT 6,D   |BIT 6,E   |BIT 6,H   |BIT 6,L   |BIT 6,(HL)|BIT 6,A   |
+*  7 |BIT 7,B   |BIT 7,C   |BIT 7,D   |BIT 7,E   |BIT 7,H   |BIT 7,L   |BIT 7,(HL)|BIT 7,A   |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+* 80  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |RES 0,B   |RES 0,C   |RES 0,D   |RES 0,E   |RES 0,H   |RES 0,L   |RES 0,(HL)|RES 0,A   |
+*  1 |RES 1,B   |RES 1,C   |RES 1,D   |RES 1,E   |RES 1,H   |RES 1,L   |RES 1,(HL)|RES 1,A   |
+*  2 |RES 2,B   |RES 2,C   |RES 2,D   |RES 2,E   |RES 2,H   |RES 2,L   |RES 2,(HL)|RES 2,A   |
+*  3 |RES 3,B   |RES 3,C   |RES 3,D   |RES 3,E   |RES 3,H   |RES 3,L   |RES 3,(HL)|RES 3,A   |
+*  4 |RES 4,B   |RES 4,C   |RES 4,D   |RES 4,E   |RES 4,H   |RES 4,L   |RES 4,(HL)|RES 4,A   |
+*  5 |RES 5,B   |RES 5,C   |RES 5,D   |RES 5,E   |RES 5,H   |RES 5,L   |RES 5,(HL)|RES 5,A   |
+*  6 |RES 6,B   |RES 6,C   |RES 6,D   |RES 6,E   |RES 6,H   |RES 6,L   |RES 6,(HL)|RES 6,A   |
+*  7 |RES 7,B   |RES 7,C   |RES 7,D   |RES 7,E   |RES 7,H   |RES 7,L   |RES 7,(HL)|RES 7,A   |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+* C0  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |SET 0,B   |SET 0,C   |SET 0,D   |SET 0,E   |SET 0,H   |SET 0,L   |SET 0,(HL)|SET 0,A   |
+*  1 |SET 1,B   |SET 1,C   |SET 1,D   |SET 1,E   |SET 1,H   |SET 1,L   |SET 1,(HL)|SET 1,A   |
+*  2 |SET 2,B   |SET 2,C   |SET 2,D   |SET 2,E   |SET 2,H   |SET 2,L   |SET 2,(HL)|SET 2,A   |
+*  3 |SET 3,B   |SET 3,C   |SET 3,D   |SET 3,E   |SET 3,H   |SET 3,L   |SET 3,(HL)|SET 3,A   |
+*  4 |SET 4,B   |SET 4,C   |SET 4,D   |SET 4,E   |SET 4,H   |SET 4,L   |SET 4,(HL)|SET 4,A   |
+*  5 |SET 5,B   |SET 5,C   |SET 5,D   |SET 5,E   |SET 5,H   |SET 5,L   |SET 5,(HL)|SET 5,A   |
+*  6 |SET 6,B   |SET 6,C   |SET 6,D   |SET 6,E   |SET 6,H   |SET 6,L   |SET 6,(HL)|SET 6,A   |
+*  7 |SET 7,B   |SET 7,C   |SET 7,D   |SET 7,E   |SET 7,H   |SET 7,L   |SET 7,(HL)|SET 7,A   |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*インデックス（XnはIX+$nnを、XhはXの上位Regを、Xlは下位Regを表す）****************************
+* 00  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  1 |***       |ADD IX,BC |***       |***       |***       |***       |***       |***       |
+*  2 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  3 |***       |ADD IX,DE |***       |***       |***       |***       |***       |***       |
+*  4 |***       |LD IX,nn  |LD (nn),IX|INC IX    |INC Xh    |DEC Xh    |LD Xh,n   |***       |
+*  5 |***       |ADD IX,IX |LD IX,(nn)|DEC IX    |INC Xl    |DEC Xl    |LD Xl,n   |***       |
+*  6 |***       |***       |***       |***       |INC (Xn)  |DEC (Xn)  |LD (Xn),n |***       |
+*  7 |***       |ADD IX,SP |***       |***       |***       |***       |***       |***       |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+
+* 40  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |***       |***       |***       |***       |LD B,Xh   |LD B,Xl   |LD B,(Xn) |***       |
+*  1 |***       |***       |***       |***       |LD C,Xh   |LD C,Xl   |LD C,(Xn) |***       |
+*  2 |***       |***       |***       |***       |LD D,Xh   |LD D,Xl   |LD D,(Xn) |***       |
+*  3 |***       |***       |***       |***       |LD E,Xh   |LD E,Xl   |LD E,(Xn) |***       |
+*  4 |LD Xh,B   |LD Xh,C   |LD Xh,D   |LD Xh,E   |LD Xh,Xh  |LD Xh,Xl  |LD H,(Xn) |LD Xh,A   |
+*  5 |LD Xl,B   |LD Xl,C   |LD Xl,D   |LD Xl,E   |LD Xl,Xh  |LD Xl,Xl  |LD L,(Xn) |LD Xl,A   |
+*  6 |LD (Xn),B |LD (Xn),C |LD (Xn),D |LD (Xn),E |LD (Xn),H |LD (Xn),L |***       |LD (Xn),A |
+*  7 |***       |***       |***       |***       |LD A,Xh   |LD A,Xl   |LD A,(Xn) |***       |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+* 80  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |***       |***       |***       |***       |ADD A,Xh  |ADD A,Xl  |ADD A,(Xn)|***       |
+*  1 |***       |***       |***       |***       |ADC A,Xh  |ADC A,Xl  |ADC A,(Xn)|***       |
+*  2 |***       |***       |***       |***       |SUB Xh    |SUB Xl    |SUB (Xn)  |***       |
+*  3 |***       |***       |***       |***       |SBC A,Xh  |SBC A,Xl  |SBC A,(Xn)|***       |
+*  4 |***       |***       |***       |***       |AND Xh    |AND Xl    |AND (Xn)  |***       |
+*  5 |***       |***       |***       |***       |XOR Xh    |XOR Xl    |XOR (Xn)  |***       |
+*  6 |***       |***       |***       |***       |OR Xh     |OR Xl     |OR (Xn)   |***       |
+*  7 |***       |***       |***       |***       |CP Xh     |CP Xl     |CP (Xn)   |***       |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+* C0  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  1 |***       |***       |***       |*CB*      |***       |***       |***       |***       |
+*  2 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  3 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  4 |***       |POP IX    |***       |EX (SP),IX|***       |PUSH IX   |***       |***       |
+*  5 |***       |JP (IX)   |***       |***       |***       |***       |***       |***       |
+*  6 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  7 |***       |LD SP,IX  |***       |***       |***       |***       |***       |***       |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*ED拡張***************************************************************************************
+* 00  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  1 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  2 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  3 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  4 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  5 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  6 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  7 |***       |***       |***       |***       |***       |***       |***       |***       |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+* 40  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |IN B,(C)  |OUT (C),B |SBC HL,BC |LD (nn),BC|NEG       |RETN      |IM 0      |LD I,A    |
+*  1 |IN C,(C)  |OUT (C),C |ADC HL,BC |LD BC,(nn)|***       |RETI      |***       |LD R,A    |
+*  2 |IN D,(C)  |OUT (C),D |SBC HL,DE |LD (nn),DE|***       |***       |IM 1      |LD A,I    |
+*  3 |IN E,(C)  |OUT (C),E |ADC HL,DE |LD DE,(nn)|***       |***       |IM 2      |LD A,R    |
+*  4 |IN H,(C)  |OUT (C),H |SBC HL,HL |LD (nn),HL|***       |***       |***       |RRD       |
+*  5 |IN L,(C)  |OUT (C),L |ADC HL,HL |LD HL,(nn)|***       |***       |***       |RLD       |
+*  6 |IN F,(C)  |OUT (C),(H|SBC HL,SP |LD (nn),SP|***       |***       |***       |***       |
+*  7 |IN A,(C)  |OUT (C),A |ADC HL,SP |LD SP,(nn)|***       |***       |***       |***       |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+* 80  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  1 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  2 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  3 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  4 |LDI       |CPI       |INI       |OUTI      |***       |***       |***       |***       |
+*  5 |LDD       |CPD       |IND       |OUTD      |***       |***       |***       |***       |
+*  6 |LDIR      |CPIR      |INIR      |OTIR      |***       |***       |***       |***       |
+*  7 |LDDR      |CPDR      |INDR      |OTDR      |***       |***       |***       |***       |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+* C0  0          1          2          3          4          5          6          7
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+*  0 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  1 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  2 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  3 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  4 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  5 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  6 |***       |***       |***       |***       |***       |***       |***       |***       |
+*  7 |***       |***       |***       |***       |***       |***       |***       |***       |
+*    +----------+----------+----------+----------+----------+----------+----------+----------+
+
+
+
+
+DisAssemble::
+*		ディスアセンブルを行なう。
+*		in	a1	ベースアドレス
+*			d1	オフセット
+*		out	a0	ディスアセンブル結果メッセージへのポインタ
+*			d0	ディスアセンブルの結果進んだサイズ
+
+		movem.l	d1-d7/a1-a6,-(sp)
+
+		lea	DisMesBuf,a0
+		moveq.l	#0,d7
+
+		bsr	DisAsm
+		move.l	d0,-(sp)
+		bsr	ReplaceIndex
+		move.l	(sp)+,d0
+
+		lea	DisMesBuf,a0
+		movem.l	(sp)+,d1-d7/a1-a6
+		rts
+
+DisAsm::
+		move.b	0(a1,d1.l),d6
+DisAsm_::
+		move.b	d6,d0
+		andi.w	#$c0,d0
+		lsr.w	#5,d0
+		move.w	DisAsm_JpTable(pc,d0.w),d0
+		jmp	DisAsm_JpTable(pc,d0.w)
+
+DisAsm_JpTable::
+		dc.w	DisAsm00-DisAsm_JpTable
+		dc.w	DisAsm01-DisAsm_JpTable
+		dc.w	DisAsm10-DisAsm_JpTable
+		dc.w	DisAsm11-DisAsm_JpTable
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+DisAsm00::
+		move.b	d6,d0
+		andi.w	#$07,d0
+		add.w	d0,d0
+		move.w	DisAsm00_JpTable(pc,d0.w),d0
+		jmp	DisAsm00_JpTable(pc,d0.w)
+DisAsm00_JpTable::
+		dc.w	DisAsm00__0-DisAsm00_JpTable
+		dc.w	DisAsm00__1-DisAsm00_JpTable
+		dc.w	DisAsm00__2-DisAsm00_JpTable
+		dc.w	DisAsm00__3-DisAsm00_JpTable
+		dc.w	DisAsm00__4-DisAsm00_JpTable
+		dc.w	DisAsm00__5-DisAsm00_JpTable
+		dc.w	DisAsm00__6-DisAsm00_JpTable
+		dc.w	DisAsm00__7-DisAsm00_JpTable
+
+DisAsm00__0::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		beq	DisAsm00_00
+		subq.w	#2,d0
+		beq	DisAsm00_10
+		subq.w	#2,d0
+		beq	DisAsm00_20
+		subq.w	#2,d0
+		beq	DisAsm00_30
+DisAsm00_40::
+DisAsm00_50::
+DisAsm00_60::
+DisAsm00_70::
+		StrCpy "JR	"
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		subq.w	#4*2,d0
+		bsr	DisCond
+		move.b	#',',(a0)+
+		addq.w	#1,d1
+		bsr	DisRelByte
+		moveq.l	#2,d0
+		rts
+DisAsm00_00::
+		StrCpy "NOP"
+		moveq.l	#1,d0
+		rts
+DisAsm00_10::
+		StrCpy "EX	AF,AF'"
+		moveq.l	#1,d0
+		rts
+DisAsm00_20::
+		StrCpy "DJNZ	"
+		addq.w	#1,d1
+		bsr	DisRelByte
+		moveq.l	#2,d0
+		rts
+DisAsm00_30::
+		StrCpy "JR	"
+		addq.w	#1,d1
+		bsr	DisRelByte
+		moveq.l	#2,d0
+		rts
+
+*	*	*	*	*
+
+DisAsm00__1::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#3,d0
+		bclr	#0,d0
+		bne	DisAsm00_O1
+DisAsm00_E1::
+		StrCpy	"LD	"
+		bsr	DisPairReg
+		move.b	#',',(a0)+
+		addq.w	#1,d1
+		bsr	DisAbsWord
+		moveq.l	#3,d0
+		rts
+DisAsm00_O1::
+		StrCpy "ADD	*P,"
+		bsr	DisPairReg
+		moveq.l	#1,d0
+		rts
+
+*	*	*	*	*
+
+DisAsm00__2::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#3,d0
+		bclr	#0,d0
+		bne	DisAsm00_O2
+DisAsm00_E2::
+		StrCpy "LD	("
+		cmpi.w	#3*2,d0
+		beq	DisAsm32
+		cmpi.w	#2*2,d0
+		beq	DisAsm22
+		bsr	DisPairReg
+		StrCpy "),A"
+		moveq.l	#1,d0
+		rts
+DisAsm32::
+		addq.w	#1,d1
+		bsr	DisAbsWord
+		StrCpy "),A"
+		moveq.l	#3,d0
+		rts
+DisAsm22::
+		addq.w	#1,d1
+		bsr	DisAbsWord
+		StrCpy "),HL"
+		moveq.l	#3,d0
+		rts
+DisAsm00_O2::
+		cmpi.w	#3*2,d0
+		beq	DisAsm3A
+		cmpi.w	#2*2,d0
+		beq	DisAsm2A
+		StrCpy "LD	A,("
+		bsr	DisPairReg
+		move.b	#')',(a0)+
+		clr.b	(a0)
+		moveq.l	#1,d0
+		rts
+DisAsm3A::
+		StrCpy "LD	A,("
+		addq.w	#1,d1
+		bsr	DisAbsWord
+		move.b	#')',(a0)+
+		clr.b	(a0)
+		moveq.l	#3,d0
+		rts
+DisAsm2A::
+		StrCpy "LD	HL,("
+		addq.w	#1,d1
+		bsr	DisAbsWord
+		move.b	#')',(a0)+
+		clr.b	(a0)
+		moveq.l	#3,d0
+		rts
+
+*	*	*	*	*
+
+DisAsm00__3::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#3,d0
+		bclr	#0,d0
+		bne	DisAsm00_O3
+DisAsm00_E3::
+		StrCpy "INC	"
+		bsr	DisPairReg
+		moveq.l	#1,d0
+		rts
+DisAsm00_O3::
+		StrCpy "DEC	"
+		bsr	DisPairReg
+		moveq.l	#1,d0
+		rts
+
+*	*	*	*	*
+
+DisAsm00__4::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		StrCpy "INC	"
+		bsr	DisSingleReg
+		moveq.l	#1,d0
+		rts
+
+*	*	*	*	*
+
+DisAsm00__5::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		StrCpy "DEC	"
+		bsr	DisSingleReg
+		moveq.l	#1,d0
+		rts
+
+*	*	*	*	*
+
+DisAsm00__6::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		StrCpy "LD	"
+		bsr	DisSingleReg
+		move.b	#',',(a0)+
+		addq.w	#1,d1
+		bsr	DisAbsByte
+		moveq.l	#2,d0
+		rts
+
+*	*	*	*	*
+
+DisAsm00__7::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		cmpi.w	#4*2,d0
+		bcc	DisAsm00__7_1
+		bsr	DisRotate
+		StrCpy "A"
+		moveq.l	#1,d0
+		rts
+
+DisAsm00__7_1::
+		subq.w	#4*2,d0
+		move.w	DisAsm00__7_1_MesTable(pc,d0.w),d0
+		StrCpy2	DisAsm00__7_1_MesTable(pc,d0.w)
+		moveq.l	#1,d0
+		rts
+DisAsm00__7_1_MesTable::
+		dc.w	DisAsm00_47_Mes-DisAsm00__7_1_MesTable
+		dc.w	DisAsm00_57_Mes-DisAsm00__7_1_MesTable
+		dc.w	DisAsm00_67_Mes-DisAsm00__7_1_MesTable
+		dc.w	DisAsm00_77_Mes-DisAsm00__7_1_MesTable
+DisAsm00_47_Mes::	dc.b	"DAA",0
+DisAsm00_57_Mes::	dc.b	"CPL",0
+DisAsm00_67_Mes::	dc.b	"SCF",0
+DisAsm00_77_Mes::	dc.b	"CCF",0
+		.even
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+DisAsm01::
+		cmpi.b	#$76,d6
+		beq	DisAsm01_76
+		StrCpy "LD	"
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		bsr	DisSingleReg
+		move.b	#',',(a0)+
+		move.b	d6,d0
+		andi.w	#$07,d0
+		add.w	d0,d0
+		bsr	DisSingleReg
+		moveq.l	#1,d0
+		rts
+
+DisAsm01_76::
+		StrCpy "HALT"
+		moveq.l	#1,d0
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+DisAsm10::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		bsr	DisOpeA
+		move.b	d6,d0
+		andi.w	#$07,d0
+		add.w	d0,d0
+		bsr	DisSingleReg
+		moveq.l	#1,d0
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+DisAsm11::
+		move.b	d6,d0
+		andi.w	#$07,d0
+		add.w	d0,d0
+		move.w	DisAsm11_JpTable(pc,d0.w),d0
+		jmp	DisAsm11_JpTable(pc,d0.w)
+DisAsm11_JpTable::
+		dc.w	DisAsm11__0-DisAsm11_JpTable
+		dc.w	DisAsm11__1-DisAsm11_JpTable
+		dc.w	DisAsm11__2-DisAsm11_JpTable
+		dc.w	DisAsm11__3-DisAsm11_JpTable
+		dc.w	DisAsm11__4-DisAsm11_JpTable
+		dc.w	DisAsm11__5-DisAsm11_JpTable
+		dc.w	DisAsm11__6-DisAsm11_JpTable
+		dc.w	DisAsm11__7-DisAsm11_JpTable
+
+DisAsm11__0::
+		StrCpy "RET	"
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		bsr	DisCond
+		moveq.l	#1,d0
+		rts
+
+*	*	*	*	*
+
+DisAsm11__1::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#3,d0
+		bclr	#0,d0
+		bne	DisAsm11_O1
+DisAsm11_E1::
+		StrCpy "POP	"
+		bsr	DisPairReg2
+		moveq.l	#1,d0
+		rts
+DisAsm11_O1::
+		move.w	DisAsm11_O1_MesTable(pc,d0.w),d0
+		StrCpy2	DisAsm11_O1_MesTable(pc,d0.w)
+		moveq.l	#1,d0
+		rts
+DisAsm11_O1_MesTable::
+		dc.w	DisAsm11_11_Mes-DisAsm11_O1_MesTable
+		dc.w	DisAsm11_31_Mes-DisAsm11_O1_MesTable
+		dc.w	DisAsm11_51_Mes-DisAsm11_O1_MesTable
+		dc.w	DisAsm11_71_Mes-DisAsm11_O1_MesTable
+DisAsm11_11_Mes::	dc.b	"RET",0
+DisAsm11_31_Mes::	dc.b	"EXX",0
+DisAsm11_51_Mes::	dc.b	"JP	(*P)",0
+DisAsm11_71_Mes::	dc.b	"LD	SP,*P",0
+		.even
+
+
+*	*	*	*	*
+
+DisAsm11__2::
+		StrCpy "JP	"
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		bsr	DisCond
+		move.b	#',',(a0)+
+		addq.w	#1,d1
+		bsr	DisAbsWord
+		moveq.l	#3,d0
+		rts
+
+*	*	*	*	*
+
+DisAsm11__3::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		move.w	DisAsm11__3_JpTable(pc,d0.w),d0
+		jmp	DisAsm11__3_JpTable(pc,d0.w)
+DisAsm11__3_JpTable::
+		dc.w	DisAsm11_03-DisAsm11__3_JpTable
+		dc.w	DisAsm11_13-DisAsm11__3_JpTable
+		dc.w	DisAsm11_23-DisAsm11__3_JpTable
+		dc.w	DisAsm11_33-DisAsm11__3_JpTable
+		dc.w	DisAsm11_43-DisAsm11__3_JpTable
+		dc.w	DisAsm11_53-DisAsm11__3_JpTable
+		dc.w	DisAsm11_63-DisAsm11__3_JpTable
+		dc.w	DisAsm11_73-DisAsm11__3_JpTable
+
+DisAsm11_03::
+		StrCpy "JP	"
+		addq.w	#1,d1
+		bsr	DisAbsWord
+		moveq.l	#3,d0
+		rts
+DisAsm11_13::
+		bra	DisAsmCB
+DisAsm11_23::
+		StrCpy "OUT	("
+		addq.w	#1,d1
+		bsr	DisAbsByte
+		StrCpy "),A"
+		moveq.l	#2,d0
+		rts
+DisAsm11_33::
+		StrCpy "IN	A,("
+		addq.w	#1,d1
+		bsr	DisAbsByte
+		move.b	#')',(a0)+
+		clr.b	(a0)
+		moveq.l	#2,d0
+		rts
+DisAsm11_43::
+		StrCpy "EX	(SP),*P"
+		moveq.l	#1,d0
+		rts
+DisAsm11_53::
+		StrCpy "EX	DE,*P"
+		moveq.l	#1,d0
+		rts
+DisAsm11_63::
+		StrCpy "DI"
+		moveq.l	#1,d0
+		rts
+DisAsm11_73::
+		StrCpy "EI"
+		moveq.l	#1,d0
+		rts
+
+*	*	*	*	*
+
+DisAsm11__4::
+		StrCpy "CALL	"
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		bsr	DisCond
+		move.b	#',',(a0)+
+		addq.w	#1,d1
+		bsr	DisAbsWord
+		moveq.l	#3,d0
+		rts
+
+*	*	*	*	*
+
+DisAsm11__5::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#3,d0
+		bclr	#0,d0
+		bne	DisAsm11_O5
+DisAsm11_E5::
+		StrCpy "PUSH	"
+		bsr	DisPairReg2
+		moveq.l	#1,d0
+		rts
+DisAsm11_O5::
+		move.w	DisAsm11_O5_JpTable(pc,d0.w),d0
+		jmp	DisAsm11_O5_JpTable(pc,d0.w)
+DisAsm11_O5_JpTable::
+		dc.w	DisAsm11_15-DisAsm11_O5_JpTable
+		dc.w	DisAsm11_35-DisAsm11_O5_JpTable
+		dc.w	DisAsm11_55-DisAsm11_O5_JpTable
+		dc.w	DisAsm11_75-DisAsm11_O5_JpTable
+DisAsm11_15::
+		StrCpy "CALL	"
+		addq.w	#1,d1
+		bsr	DisAbsWord
+		moveq.l	#3,d0
+		rts
+DisAsm11_35::
+		bra	DisAsmDD
+DisAsm11_55::
+		bra	DisAsmED
+DisAsm11_75::
+		bra	DisAsmFD
+
+*	*	*	*	*
+
+DisAsm11__6::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		bsr	DisOpeA
+		addq.w	#1,d1
+		bsr	DisAbsByte
+		moveq.l	#2,d0
+		rts
+
+*	*	*	*	*
+
+DisAsm11__7::
+		StrCpy "RST	"
+		move.b	d6,d0
+		andi.w	#$07,d0
+		lsl.w	#3,d0
+		bsr	DisD0Byte
+		moveq.l	#1,d0
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+DisAsmCB::
+		addq.w	#1,d1
+		move.b	0(a1,d1.l),d6
+		move.b	d6,d0
+		andi.w	#$c0,d0
+		lsr.w	#5,d0
+		move.w	DisAsmCB_JpTable(pc,d0.w),d0
+		jmp	DisAsmCB_JpTable(pc,d0.w)
+DisAsmCB_JpTable::
+		dc.w	DisAsmCB_00-DisAsmCB_JpTable
+		dc.w	DisAsmCB_01-DisAsmCB_JpTable
+		dc.w	DisAsmCB_10-DisAsmCB_JpTable
+		dc.w	DisAsmCB_11-DisAsmCB_JpTable
+DisAsmCB_00::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		bsr	DisRotate
+		move.b	#9,(a0)+
+		move.b	d6,d0
+		andi.w	#$07,d0
+		add.w	d0,d0
+		bsr	DisSingleReg
+		moveq.l	#2,d0
+		rts
+
+DisAsmCB_01::
+		StrCpy "BIT	"
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#3,d0
+		add.b	#'0',d0
+		move.b	d0,(a0)+
+		move.b	#',',(a0)+
+		move.b	d6,d0
+		andi.w	#$07,d0
+		add.w	d0,d0
+		bsr	DisSingleReg
+		moveq.l	#2,d0
+		rts
+DisAsmCB_10::
+		StrCpy "RES	"
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#3,d0
+		add.b	#'0',d0
+		move.b	d0,(a0)+
+		move.b	#',',(a0)+
+		move.b	d6,d0
+		andi.w	#$07,d0
+		add.w	d0,d0
+		bsr	DisSingleReg
+		moveq.l	#2,d0
+		rts
+DisAsmCB_11::
+		StrCpy "SET	"
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#3,d0
+		add.b	#'0',d0
+		move.b	d0,(a0)+
+		move.b	#',',(a0)+
+		move.b	d6,d0
+		andi.w	#$07,d0
+		add.w	d0,d0
+		bsr	DisSingleReg
+		moveq.l	#2,d0
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+DisAsmED::
+		addq.w	#1,d1
+		move.b	0(a1,d1.l),d6
+		move.b	d6,d0
+		andi.w	#$c0,d0
+		lsr.w	#5,d0
+		move.w	DisAsmED_JpTable(pc,d0.w),d0
+		jmp	DisAsmED_JpTable(pc,d0.w)
+
+DisAsmED_JpTable::
+		dc.w	DisAsmED_00-DisAsmED_JpTable
+		dc.w	DisAsmED_01-DisAsmED_JpTable
+		dc.w	DisAsmED_10-DisAsmED_JpTable
+		dc.w	DisAsmED_11-DisAsmED_JpTable
+
+DisAsmED_00::
+		StrCpy	"UNDEF"
+		moveq.l	#1,d0
+		rts
+
+DisAsmED_01::
+		move.b	d6,d0
+		andi.w	#$07,d0
+		add.w	d0,d0
+		move.w	DisAsmED_01_JpTable(pc,d0.w),d0
+		jmp	DisAsmED_01_JpTable(pc,d0.w)
+DisAsmED_01_JpTable::
+		dc.w	DisAsmED_01__0-DisAsmED_01_JpTable
+		dc.w	DisAsmED_01__1-DisAsmED_01_JpTable
+		dc.w	DisAsmED_01__2-DisAsmED_01_JpTable
+		dc.w	DisAsmED_01__3-DisAsmED_01_JpTable
+		dc.w	DisAsmED_01__4-DisAsmED_01_JpTable
+		dc.w	DisAsmED_01__5-DisAsmED_01_JpTable
+		dc.w	DisAsmED_01__6-DisAsmED_01_JpTable
+		dc.w	DisAsmED_01__7-DisAsmED_01_JpTable
+DisAsmED_01__0::
+		StrCpy "IN	"
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		cmpi.b	#6*2,d0
+		beq	DisAsmED_01_60
+		bsr	DisSingleReg
+		StrCpy ",(C)"
+		moveq.l	#2,d0
+		rts
+DisAsmED_01_60::
+		StrCpy	"F,(C)"
+		moveq.l	#2,d0
+		rts
+DisAsmED_01__1::
+		StrCpy "OUT	(C),"
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		bsr	DisSingleReg
+		moveq.l	#2,d0
+		rts
+DisAsmED_01__2::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#3,d0
+		bclr	#0,d0
+		bne	DisAsmED_01_O2
+DisAsmED_01_E2::
+		StrCpy "SBC	HL,"
+		bsr	DisPairReg
+		moveq.l	#2,d0
+		rts
+DisAsmED_01_O2::
+		StrCpy "ADC	HL,"
+		bsr	DisPairReg
+		moveq.l	#2,d0
+		rts
+DisAsmED_01__3::
+		addq.w	#1,d1
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#3,d0
+		bclr	#0,d0
+		bne	DisAsmED_01_O3
+DisAsmED_01_E3::
+		StrCpy "LD	("
+		bsr	DisAbsWord
+		StrCpy "),"
+		move.b	d6,d0
+		andi.w	#$30,d0
+		lsr.w	#3,d0
+		bsr	DisPairReg
+		moveq.l	#4,d0
+		rts
+DisAsmED_01_O3::
+		StrCpy "LD	"
+		bsr	DisPairReg
+		StrCpy ",("
+		bsr	DisAbsWord
+		move.b	#')',(a0)+
+		clr.b	(a0)+
+		moveq.l	#4,d0
+		rts
+DisAsmED_01__4::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		tst.b	d0
+		bne	DisAsmED_01_X4
+		StrCpy "NEG"
+		moveq.l	#2,d0
+		rts
+DisAsmED_01_X4::
+		StrCpy "UNDEF"
+		moveq.l	#2,d0
+		rts
+DisAsmED_01__5::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		cmpi.b	#1*8,d0
+		beq	DisAsmED_01_15
+		tst.b	d0
+		bne	DisAsmED_01_X5
+DisAsmED_01_05::
+		StrCpy "RETI"
+		moveq.l	#2,d0
+		rts
+DisAsmED_01_15::
+		StrCpy "RETN"
+		moveq.l	#2,d0
+		rts
+DisAsmED_01_X5::
+		StrCpy "UNDEF"
+		moveq.l	#2,d0
+		rts
+DisAsmED_01__6::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#3,d0
+		cmpi.b	#1,d0
+		beq	DisAsmED_01_X6
+		bne	@f
+		subq.b	#1,d0
+@@:
+		cmpi.b	#3,d0
+		bcc	DisAsmED_01_X6
+		StrCpy "IM	"
+		lsr.w	#1,d0
+		add.b	#'0',d0
+		move.b	d0,(a0)+
+		clr.b	(a0)
+		moveq.l	#2,d0
+		rts
+DisAsmED_01_X6::
+		StrCpy "UNDEF"
+		moveq.l	#2,d0
+		rts
+DisAsmED_01__7::
+		move.b	(a1,d1.l),d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		move.w	DisAsmED_01__7_MesTable(pc,d0.w),d0
+		StrCpy2	DisAsmED_01__7_MesTable(pc,d0.w)
+		moveq.l	#2,d0
+		rts
+DisAsmED_01__7_MesTable::
+		dc.w	DisAsmED_01_07_Mes-DisAsmED_01__7_MesTable
+		dc.w	DisAsmED_01_17_Mes-DisAsmED_01__7_MesTable
+		dc.w	DisAsmED_01_27_Mes-DisAsmED_01__7_MesTable
+		dc.w	DisAsmED_01_37_Mes-DisAsmED_01__7_MesTable
+		dc.w	DisAsmED_01_47_Mes-DisAsmED_01__7_MesTable
+		dc.w	DisAsmED_01_57_Mes-DisAsmED_01__7_MesTable
+		dc.w	DisAsmED_01_67_Mes-DisAsmED_01__7_MesTable
+		dc.w	DisAsmED_01_77_Mes-DisAsmED_01__7_MesTable
+DisAsmED_01_07_Mes::	dc.b   "LD	I,A",0
+DisAsmED_01_17_Mes::	dc.b   "LD	A,I",0
+DisAsmED_01_27_Mes::	dc.b   "LD	R,A",0
+DisAsmED_01_37_Mes::	dc.b   "LD	A,R",0
+DisAsmED_01_47_Mes::	dc.b   "RRD",0
+DisAsmED_01_57_Mes::	dc.b   "RLD",0
+DisAsmED_01_67_Mes::
+DisAsmED_01_77_Mes::	dc.b   "UNDEF",0
+		.even
+
+DisAsmED_10::
+		move.b	d6,d0
+		andi.w	#$07,d0
+		add.w	d0,d0
+		move.w	DisAsmED_10_JpTable(pc,d0.w),d0
+		jmp	DisAsmED_10_JpTable(pc,d0.w)
+DisAsmED_10_JpTable::
+		dc.w	DisAsmED_10__0-DisAsmED_10_JpTable
+		dc.w	DisAsmED_10__1-DisAsmED_10_JpTable
+		dc.w	DisAsmED_10__2-DisAsmED_10_JpTable
+		dc.w	DisAsmED_10__3-DisAsmED_10_JpTable
+		dc.w	DisAsmED_10__4-DisAsmED_10_JpTable
+		dc.w	DisAsmED_10__5-DisAsmED_10_JpTable
+		dc.w	DisAsmED_10__6-DisAsmED_10_JpTable
+		dc.w	DisAsmED_10__7-DisAsmED_10_JpTable
+DisAsmED_10__0::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		move.w	DisAsmED_10__0_MesTable(pc,d0.w),d0
+		StrCpy2	DisAsmED_10__0_MesTable(pc,d0.w)
+		moveq.l	#2,d0
+		rts
+DisAsmED_10__0_MesTable::
+		dc.w	DisAsmED_10_00_Mes-DisAsmED_10__0_MesTable
+		dc.w	DisAsmED_10_10_Mes-DisAsmED_10__0_MesTable
+		dc.w	DisAsmED_10_20_Mes-DisAsmED_10__0_MesTable
+		dc.w	DisAsmED_10_30_Mes-DisAsmED_10__0_MesTable
+		dc.w	DisAsmED_10_40_Mes-DisAsmED_10__0_MesTable
+		dc.w	DisAsmED_10_50_Mes-DisAsmED_10__0_MesTable
+		dc.w	DisAsmED_10_60_Mes-DisAsmED_10__0_MesTable
+		dc.w	DisAsmED_10_70_Mes-DisAsmED_10__0_MesTable
+DisAsmED_10_00_Mes::
+DisAsmED_10_10_Mes::
+DisAsmED_10_20_Mes::
+DisAsmED_10_30_Mes::	dc.b   "UNDEF",0
+DisAsmED_10_40_Mes::	dc.b   "LDI",0
+DisAsmED_10_50_Mes::	dc.b   "LDD",0
+DisAsmED_10_60_Mes::	dc.b   "LDIR",0
+DisAsmED_10_70_Mes::	dc.b   "LDDR",0
+		.even
+DisAsmED_10__1::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		move.w	DisAsmED_10__1_MesTable(pc,d0.w),d0
+		StrCpy2	DisAsmED_10__1_MesTable(pc,d0.w)
+		moveq.l	#2,d0
+		rts
+DisAsmED_10__1_MesTable::
+		dc.w	DisAsmED_10_01_Mes-DisAsmED_10__1_MesTable
+		dc.w	DisAsmED_10_11_Mes-DisAsmED_10__1_MesTable
+		dc.w	DisAsmED_10_21_Mes-DisAsmED_10__1_MesTable
+		dc.w	DisAsmED_10_31_Mes-DisAsmED_10__1_MesTable
+		dc.w	DisAsmED_10_41_Mes-DisAsmED_10__1_MesTable
+		dc.w	DisAsmED_10_51_Mes-DisAsmED_10__1_MesTable
+		dc.w	DisAsmED_10_61_Mes-DisAsmED_10__1_MesTable
+		dc.w	DisAsmED_10_71_Mes-DisAsmED_10__1_MesTable
+DisAsmED_10_01_Mes::
+DisAsmED_10_11_Mes::
+DisAsmED_10_21_Mes::
+DisAsmED_10_31_Mes::	dc.b   "UNDEF",0
+DisAsmED_10_41_Mes::	dc.b   "CPI",0
+DisAsmED_10_51_Mes::	dc.b   "CPD",0
+DisAsmED_10_61_Mes::	dc.b   "CPIR",0
+DisAsmED_10_71_Mes::	dc.b   "CPDR",0
+		.even
+DisAsmED_10__2::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		move.w	DisAsmED_10__2_MesTable(pc,d0.w),d0
+		StrCpy2	DisAsmED_10__2_MesTable(pc,d0.w)
+		moveq.l	#2,d0
+		rts
+DisAsmED_10__2_MesTable::
+		dc.w	DisAsmED_10_02_Mes-DisAsmED_10__2_MesTable
+		dc.w	DisAsmED_10_12_Mes-DisAsmED_10__2_MesTable
+		dc.w	DisAsmED_10_22_Mes-DisAsmED_10__2_MesTable
+		dc.w	DisAsmED_10_32_Mes-DisAsmED_10__2_MesTable
+		dc.w	DisAsmED_10_42_Mes-DisAsmED_10__2_MesTable
+		dc.w	DisAsmED_10_52_Mes-DisAsmED_10__2_MesTable
+		dc.w	DisAsmED_10_62_Mes-DisAsmED_10__2_MesTable
+		dc.w	DisAsmED_10_72_Mes-DisAsmED_10__2_MesTable
+DisAsmED_10_02_Mes::
+DisAsmED_10_12_Mes::
+DisAsmED_10_22_Mes::
+DisAsmED_10_32_Mes::	dc.b   "UNDEF",0
+DisAsmED_10_42_Mes::	dc.b   "INI",0
+DisAsmED_10_52_Mes::	dc.b   "IND",0
+DisAsmED_10_62_Mes::	dc.b   "INIR",0
+DisAsmED_10_72_Mes::	dc.b   "INDR",0
+		.even
+DisAsmED_10__3::
+		move.b	d6,d0
+		andi.w	#$38,d0
+		lsr.w	#2,d0
+		move.w	DisAsmED_10__3_MesTable(pc,d0.w),d0
+		StrCpy2	DisAsmED_10__3_MesTable(pc,d0.w)
+		moveq.l	#2,d0
+		rts
+DisAsmED_10__3_MesTable::
+		dc.w	DisAsmED_10_03_Mes-DisAsmED_10__3_MesTable
+		dc.w	DisAsmED_10_13_Mes-DisAsmED_10__3_MesTable
+		dc.w	DisAsmED_10_23_Mes-DisAsmED_10__3_MesTable
+		dc.w	DisAsmED_10_33_Mes-DisAsmED_10__3_MesTable
+		dc.w	DisAsmED_10_43_Mes-DisAsmED_10__3_MesTable
+		dc.w	DisAsmED_10_53_Mes-DisAsmED_10__3_MesTable
+		dc.w	DisAsmED_10_63_Mes-DisAsmED_10__3_MesTable
+		dc.w	DisAsmED_10_73_Mes-DisAsmED_10__3_MesTable
+DisAsmED_10_03_Mes::
+DisAsmED_10_13_Mes::
+DisAsmED_10_23_Mes::
+DisAsmED_10_33_Mes::	dc.b   "UNDEF",0
+DisAsmED_10_43_Mes::	dc.b   "OUTI",0
+DisAsmED_10_53_Mes::	dc.b   "OUTD",0
+DisAsmED_10_63_Mes::	dc.b   "OTIR",0
+DisAsmED_10_73_Mes::	dc.b   "OTDR",0
+		.even
+DisAsmED_10__4::
+DisAsmED_10__5::
+DisAsmED_10__6::
+DisAsmED_10__7::
+		StrCpy	"UNDEF"
+		moveq.l	#2,d0
+		rts
+
+DisAsmED_11::
+		StrCpy	"UNDEF"
+		moveq.l	#2,d0
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+DisAsmDD::
+		moveq.l	#1,d7
+		bra	DisAsmIndex
+DisAsmFD::
+		moveq.l	#2,d7
+DisAsmIndex::
+		addq.w	#1,d1
+		moveq.l	#0,d0
+		move.b	0(a1,d1.l),d0
+		lea	DisAsmIndexTable,a2
+		move.b	(a2,d0.w),d0
+		move.w	DisAsmIndex_JpTable(pc,d0.w),d0
+		jmp	DisAsmIndex_JpTable(pc,d0.w)
+DisAsmIndex_JpTable::
+		dc.w	DisAsmIndex_0-DisAsmIndex_JpTable
+		dc.w	DisAsmIndex_1-DisAsmIndex_JpTable
+		dc.w	DisAsmIndex_2-DisAsmIndex_JpTable
+		dc.w	DisAsmIndex_3-DisAsmIndex_JpTable
+		dc.w	DisAsmIndex_4-DisAsmIndex_JpTable
+
+DisAsmIndex_0::
+		StrCpy "UNDEF	"
+		moveq.l	#1,d0
+		rts
+DisAsmIndex_1::
+		bsr	DisAsm
+		addq.w	#1,d0
+		move.l	d0,-(sp)
+		bsr	ReplaceIndex
+		move.l	(sp)+,d0
+		rts
+DisAsmIndex_2::
+		move.b	0(a1,d1.l),d6
+		addq.w	#1,d1
+		move.b	0(a1,d1.l),(DisAsmIndexNo)
+		bsr	DisAsm_
+		addq.w	#2,d0
+		move.l	d0,-(sp)
+		bsr	ReplaceIndex
+		move.l	(sp)+,d0
+		rts
+DisAsmIndex_3::
+		move.b	2(a1,d1.l),d0
+		andi.w	#$07,d0
+		cmpi.b	#4,d0
+		beq	DisAsmIndex_1
+		cmpi.b	#5,d0
+		beq	DisAsmIndex_1
+		cmpi.b	#6,d0
+		bne	DisAsmIndex_0
+		addq.w	#1,d1
+		move.b	0(a1,d1.l),(DisAsmIndexNo)
+		bsr	DisAsmCB
+		addq.b	#2,d0
+		move.l	d0,-(sp)
+		bsr	ReplaceIndex
+		move.l	(sp)+,d0
+		rts
+
+DisAsmIndex_4::
+		move.b	0(a1,d1.l),d6
+		addq.w	#1,d1
+		move.b	0(a1,d1.l),(DisAsmIndexNo)
+		cmpi.b	#$6E,d6
+		beq	DisAsmIndex_4_6E
+		cmpi.b	#$74,d6
+		beq	DisAsmIndex_4_74
+		cmpi.b	#$75,d6
+		beq	DisAsmIndex_4_75
+DisAsmIndex_4_66::
+		StrCpy "LD	H,(*M)"
+		moveq.l	#3,d0
+		rts
+DisAsmIndex_4_6E::
+		StrCpy "LD	L,(*M)"
+		moveq.l	#3,d0
+		rts
+DisAsmIndex_4_74::
+		StrCpy "LD	(*M),H"
+		moveq.l	#3,d0
+		rts
+DisAsmIndex_4_75::
+		StrCpy "LD	(*M),L"
+		moveq.l	#3,d0
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+ReplaceIndex::
+*		インデックスレジスタ文字列を置換する。
+*		in	なし
+*		out	なし
+
+		movem.l	d1-d7/a0-a6,-(sp)
+
+		lea	DisMesBuf,a0
+		lea	TmpDisMesBuf,a1
+@@:		move.b	(a0)+,(a1)+
+		bne	@b
+		lea	DisMesBuf,a0
+		lea	TmpDisMesBuf,a1
+ReplaceIndex_lp::
+		move.b	(a1)+,d0
+		cmpi.b	#'*',d0
+		beq	ReplaceIndex_1
+		move.b	d0,(a0)+
+		bne	ReplaceIndex_lp
+		bra	ReplaceIndex_e
+ReplaceIndex_1::
+		move.b	(a1)+,d0
+		cmpi.b	#'H',d0
+		beq	ReplaceIndex_H
+		cmpi.b	#'L',d0
+		beq	ReplaceIndex_L
+		cmpi.b	#'P',d0
+		beq	ReplaceIndex_P
+		cmpi.b	#'M',d0
+		beq	ReplaceIndex_M
+		move.b	#'*',(a0)+
+		move.b	d0,(a0)+
+		bra	ReplaceIndex_lp
+ReplaceIndex_H::
+		cmpi.b	#1,d7
+		bcs	ReplaceIndex_HReg
+		beq	ReplaceIndex_IXHReg
+		bra	ReplaceIndex_IYHReg
+ReplaceIndex_L::
+		cmpi.b	#1,d7
+		bcs	ReplaceIndex_LReg
+		beq	ReplaceIndex_IXLReg
+		bra	ReplaceIndex_IYLReg
+ReplaceIndex_P::
+		cmpi.b	#1,d7
+		bcs	ReplaceIndex_HLReg
+		beq	ReplaceIndex_IXReg
+		bra	ReplaceIndex_IYReg
+ReplaceIndex_M::
+		cmpi.b	#1,d7
+		bcs	ReplaceIndex_HLReg
+		beq	ReplaceIndex_IXRegIndex
+		bra	ReplaceIndex_IYRegIndex
+
+ReplaceIndex_HReg::
+		StrCpy	"H"
+		bra	ReplaceIndex_lp
+ReplaceIndex_IXHReg::
+		StrCpy	"IXH"
+		bra	ReplaceIndex_lp
+ReplaceIndex_IYHReg::
+		StrCpy	"IYH"
+		bra	ReplaceIndex_lp
+ReplaceIndex_LReg::
+		StrCpy	"L"
+		bra	ReplaceIndex_lp
+ReplaceIndex_IXLReg::
+		StrCpy	"IXL"
+		bra	ReplaceIndex_lp
+ReplaceIndex_IYLReg::
+		StrCpy	"IYL"
+		bra	ReplaceIndex_lp
+ReplaceIndex_HLReg::
+		StrCpy	"HL"
+		bra	ReplaceIndex_lp
+ReplaceIndex_IXReg::
+		StrCpy	"IX"
+		bra	ReplaceIndex_lp
+ReplaceIndex_IYReg::
+		StrCpy	"IY"
+		bra	ReplaceIndex_lp
+ReplaceIndex_IXRegIndex::
+		StrCpy	"IX"
+		bra	ReplaceIndex_Index
+ReplaceIndex_IYRegIndex::
+		StrCpy	"IY"
+ReplaceIndex_Index::
+		move.b	(DisAsmIndexNo),d0
+		bmi	ReplaceIndex_Index_Minus
+ReplaceIndex_Index_Plus::
+		StrCpy	"+"
+		bra	ReplaceIndex_Index_2
+ReplaceIndex_Index_Minus::
+		StrCpy	"+"
+ReplaceIndex_Index_2::
+		bsr	DisD0Byte
+		bra	ReplaceIndex_lp
+
+ReplaceIndex_e::
+		movem.l	(sp)+,d1-d7/a0-a6
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+DisTableMessage::
+		move.w	(a6,d0.w),d0
+		StrCpy2	(a6,d0.w)
+		rts
+
+DisCond::
+		lea	Cond_MesTable,a6
+		bra	DisTableMessage
+
+DisSingleReg::
+		lea	SReg_MesTable,a6
+		bra	DisTableMessage
+
+DisPairReg::
+		lea	PReg_MesTable,a6
+		bra	DisTableMessage
+
+DisPairReg2::
+		lea	PReg2_MesTable,a6
+		bra	DisTableMessage
+
+DisOpeA::
+		lea	OpeA_MesTable,a6
+		bra	DisTableMessage
+
+DisRotate::
+		lea	DisRotate_MesTable,a6
+		bra	DisTableMessage
+
+DisRelByte::
+		move.b	0(a1,d1.l),d0
+		ext.w	d0
+		addq.w	#1,d0
+		add.w	d1,d0
+		bra	DisD0Word
+DisAbsByte::
+		move.b	0(a1,d1.l),d0
+		bra	DisD0Byte
+DisAbsWord::
+		move.b	1(a1,d1.l),-(sp)
+		move.w	(sp)+,d0
+		move.b	0(a1,d1.l),d0
+		bra	DisD0Word
+DisD0Word::
+		move.w	d0,-(sp)
+		move.b	(sp),d0
+		bsr	DisD0Byte
+		move.w	(sp)+,d0
+		bra	DisD0Byte_1
+DisD0Byte::
+		move.b	#'$',(a0)+
+DisD0Byte_1::
+		move.w	d0,-(sp)
+		lsr.w	#4,d0
+		andi.w	#$0f,d0
+		move.b	DisD0Byte_HexTable(pc,d0.w),(a0)+
+		move.w	(sp)+,d0
+		andi.w	#$0f,d0
+		move.b	DisD0Byte_HexTable(pc,d0.w),(a0)+
+		clr.b	(a0)
+		rts
+
+DisD0Byte_HexTable::
+		dc.b	'0123456789ABCDEF'
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+		.data
+
+
+		.even
+Cond_MesTable::
+		dc.w	Cond_NZ-Cond_MesTable
+		dc.w	Cond_Z-Cond_MesTable
+		dc.w	Cond_NC-Cond_MesTable
+		dc.w	Cond_C-Cond_MesTable
+		dc.w	Cond_PO-Cond_MesTable
+		dc.w	Cond_PE-Cond_MesTable
+		dc.w	Cond_P-Cond_MesTable
+		dc.w	Cond_M-Cond_MesTable
+Cond_NZ::	dc.b	"NZ",0
+Cond_Z::	dc.b	"Z",0
+Cond_NC::	dc.b	"NC",0
+Cond_C::	dc.b	"C",0
+Cond_PO::	dc.b	"PO",0
+Cond_PE::	dc.b	"PE",0
+Cond_P::	dc.b	"P",0
+Cond_M::	dc.b	"M",0
+
+		.even
+SReg_MesTable::
+		dc.w	SReg_B-SReg_MesTable
+		dc.w	SReg_C-SReg_MesTable
+		dc.w	SReg_D-SReg_MesTable
+		dc.w	SReg_E-SReg_MesTable
+		dc.w	SReg_H-SReg_MesTable
+		dc.w	SReg_L-SReg_MesTable
+		dc.w	SReg__HL_-SReg_MesTable
+		dc.w	SReg_A-SReg_MesTable
+SReg_B::	dc.b	"B",0
+SReg_C::	dc.b	"C",0
+SReg_D::	dc.b	"D",0
+SReg_E::	dc.b	"E",0
+SReg_H::	dc.b	"*H",0
+SReg_L::	dc.b	"*L",0
+SReg__HL_::	dc.b	"(*M)",0
+SReg_A::	dc.b	"A",0
+
+		.even
+PReg_MesTable::
+		dc.w	PReg_BC-PReg_MesTable
+		dc.w	PReg_DE-PReg_MesTable
+		dc.w	PReg_HL-PReg_MesTable
+		dc.w	PReg_SP-PReg_MesTable
+PReg_BC::	dc.b	"BC",0
+PReg_DE::	dc.b	"DE",0
+PReg_HL::	dc.b	"*P",0
+PReg_SP::	dc.b	"SP",0
+
+		.even
+PReg2_MesTable::
+		dc.w	PReg2_BC-PReg2_MesTable
+		dc.w	PReg2_DE-PReg2_MesTable
+		dc.w	PReg2_HL-PReg2_MesTable
+		dc.w	PReg2_SP-PReg2_MesTable
+PReg2_BC::	dc.b	"BC",0
+PReg2_DE::	dc.b	"DE",0
+PReg2_HL::	dc.b	"*P",0
+PReg2_SP::	dc.b	"AF",0
+
+		.even
+OpeA_MesTable::
+		dc.w	OpeA_ADD-OpeA_MesTable
+		dc.w	OpeA_ADC-OpeA_MesTable
+		dc.w	OpeA_SUB-OpeA_MesTable
+		dc.w	OpeA_SBC-OpeA_MesTable
+		dc.w	OpeA_AND-OpeA_MesTable
+		dc.w	OpeA_XOR-OpeA_MesTable
+		dc.w	OpeA_OR-OpeA_MesTable
+		dc.w	OpeA_CP-OpeA_MesTable
+OpeA_ADD::	dc.b   "ADD	A,",0
+OpeA_ADC::	dc.b   "ADC	A,",0
+OpeA_SUB::	dc.b   "SUB	",0
+OpeA_SBC::	dc.b   "SBC	A,",0
+OpeA_AND::	dc.b   "AND	",0
+OpeA_XOR::	dc.b   "XOR	",0
+OpeA_OR::	dc.b   "OR	",0
+OpeA_CP::	dc.b   "CP	",0
+
+		.even
+DisRotate_MesTable::
+		dc.w	DisRotate_RLC-DisRotate_MesTable
+		dc.w	DisRotate_RRC-DisRotate_MesTable
+		dc.w	DisRotate_RL-DisRotate_MesTable
+		dc.w	DisRotate_RR-DisRotate_MesTable
+		dc.w	DisRotate_SLA-DisRotate_MesTable
+		dc.w	DisRotate_SRA-DisRotate_MesTable
+		dc.w	DisRotate_UND-DisRotate_MesTable
+		dc.w	DisRotate_SRL-DisRotate_MesTable
+DisRotate_RLC::	dc.b	"RLC",0
+DisRotate_RRC::	dc.b	"RRC",0
+DisRotate_RL::	dc.b	"RL",0
+DisRotate_RR::	dc.b	"RR",0
+DisRotate_SLA::	dc.b	"SLA",0
+DisRotate_SRA::	dc.b	"SRA",0
+DisRotate_UND::	dc.b	"UNDEF",0
+DisRotate_SRL::	dc.b	"SRL",0
+
+DisAsmIndexTable::
+	dc.b	0,0,0,0,0,0,0,0
+	dc.b	0,2,0,0,0,0,0,0
+	dc.b	0,0,0,0,0,0,0,0
+	dc.b	0,2,0,0,0,0,0,0
+	dc.b	0,2,2,2,2,2,2,0
+	dc.b	0,2,2,2,2,2,2,0
+	dc.b	0,0,0,0,4,4,4,0
+	dc.b	0,2,0,0,0,0,0,0
+
+	dc.b	0,0,0,0,2,2,4,0
+	dc.b	0,0,0,0,2,2,4,0
+	dc.b	0,0,0,0,2,2,4,0
+	dc.b	0,0,0,0,2,2,4,0
+	dc.b	2,2,2,2,2,2,8,2
+	dc.b	2,2,2,2,2,2,8,2
+	dc.b	4,4,4,4,8,8,0,4
+	dc.b	0,0,0,0,2,2,4,0
+
+	dc.b	0,0,0,0,2,2,4,0
+	dc.b	0,0,0,0,2,2,4,0
+	dc.b	0,0,0,0,2,2,4,0
+	dc.b	0,0,0,0,2,2,4,0
+	dc.b	0,0,0,0,2,2,4,0
+	dc.b	0,0,0,0,2,2,4,0
+	dc.b	0,0,0,0,2,2,4,0
+	dc.b	0,0,0,0,2,2,4,0
+
+	dc.b	0,0,0,0,0,0,0,0
+	dc.b	0,0,0,6,0,0,0,0
+	dc.b	0,0,0,0,0,0,0,0
+	dc.b	0,0,0,0,0,0,0,0
+	dc.b	0,2,0,2,0,2,0,0
+	dc.b	0,2,0,2,0,0,0,0
+	dc.b	0,0,0,0,0,0,0,0
+	dc.b	0,2,0,0,0,0,0,0
+
+
+

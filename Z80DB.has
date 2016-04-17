@@ -1,0 +1,2435 @@
+*************************************************
+*						*
+*	Z80 Debugger for 68000 Ver 1.00		*
+*						*
+*	Copyright  1994/01/20 GORRY.		*
+*						*
+*************************************************
+
+
+	.cpu	68000
+
+		.include	DOSCALL.MAC
+		.include	IOCSCALL.MAC
+
+*	d0   00 00  -- --	a0   ---- ----
+*	d1   00 00  -- --	a1   ---- ----
+*	d2   -- F'  -- F	a2   0000 SP.w
+*	d3  IYHIYL IXHIXL	a3   PC.l
+*	d4   I  A'  I  A	a4   T_OPC
+*	d5   B' C'  B  C	a5   A_MEM*
+*	d6   D' E'  D  E	a6   A_BAS*
+*	d7   H' L'  H  L
+
+
+		.xref	SETVECT
+		.xref	RETVECT
+		.xref	F_DISP
+		.xref	INITFM
+		.xref	RETCRTC
+
+PwCRTC00	equ	$E80000		* CRTC R00
+PwSCTXTY	equ	$E80016		* CRTC R11  テキストスクロール（Ｙ方向）
+PwSCGP0Y	equ	$E8001A		* CRTC R13  グラフィックP0スクロール（Ｙ方向）
+PsCRTC20	equ	$E80029		* CRTC R20 L
+BPMAX		equ	10		* ブレークポインタ設置数
+
+
+ if DUMMYDB=1	*********************************************************
+
+InitZ80Debugger::
+Z80Debugger::
+BPZ80Debugger::
+		rts
+
+
+		.bss
+
+TXTY::
+		dc.w	0
+Z80DebuggerActive::
+		dc.w	0
+
+ else	*****************************************************************
+
+
+		.offset	0
+						* Z80レジスタアドレス
+ZR_00:		ds.b	1
+ZR_01:		ds.b	1
+ZR_02:		ds.b	1
+ZR_03:		ds.b	1
+ZR_04:		ds.b	1
+ZR_05:		ds.b	1
+ZR_06:		ds.b	1
+ZR_07:		ds.b	1
+ZR_08:		ds.b	1
+ZR_F_:		ds.b	1
+ZR_0A:		ds.b	1
+ZR_F:		ds.b	1
+ZR_IY:
+ZR_IYH:		ds.b	1
+ZR_IYL:		ds.b	1
+ZR_IX:
+ZR_IXH:		ds.b	1
+ZR_IXL:		ds.b	1
+ZR_I_:		ds.b	1
+ZR_A_:		ds.b	1
+ZR_I:		ds.b	1
+ZR_A:		ds.b	1
+ZR_BC_:
+ZR_B_:		ds.b	1
+ZR_C_:		ds.b	1
+ZR_BC:
+ZR_B:		ds.b	1
+ZR_C:		ds.b	1
+ZR_DE_:
+ZR_D_:		ds.b	1
+ZR_E_:		ds.b	1
+ZR_DE:
+ZR_D:		ds.b	1
+ZR_E:		ds.b	1
+ZR_HL_:
+ZR_H_:		ds.b	1
+ZR_L_:		ds.b	1
+ZR_HL:
+ZR_H:		ds.b	1
+ZR_L:		ds.b	1
+ZR_20:		ds.b	1
+ZR_21:		ds.b	1
+ZR_22:		ds.b	1
+ZR_23:		ds.b	1
+ZR_24:		ds.b	1
+ZR_25:		ds.b	1
+ZR_26:		ds.b	1
+ZR_27:		ds.b	1
+ZR_28:		ds.b	1
+ZR_29:		ds.b	1
+ZR_SP:		ds.b	1
+ZR_2B:		ds.b	1
+ZR_X6PC:	ds.b	1
+ZR_2D:		ds.b	1
+ZR_2E:		ds.b	1
+ZR_2F:		ds.b	1
+ZR_30:		ds.b	1
+ZR_31:		ds.b	1
+ZR_32:		ds.b	1
+ZR_33:		ds.b	1
+ZR_BASE:	ds.b	1
+ZR_35:		ds.b	1
+ZR_36:		ds.b	1
+ZR_37:		ds.b	1
+ZR_38:		ds.b	1
+ZR_39:		ds.b	1
+ZR_3A:		ds.b	1
+ZR_3B:		ds.b	1
+ZR_3C:		ds.b	1
+ZR_3D:		ds.b	1
+ZR_PC:		ds.b	1
+ZR_3F:		ds.b	1
+		.text
+
+		.offset	0
+						* ブレークポインタ管理
+BP_Adr:		ds.w	1
+BP_Sw:		ds.w	1
+BP_Orig:	ds.w	1
+SizeOfBP:
+		.text
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+InitZ80Debugger::
+*		デバッガ初期化。
+*		in	なし
+*		out	なし
+
+		move.w	#1,(TraceCounter)
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+BPZ80Debugger::
+*		ブレークポインタによるデバッガ入口。
+*		in	Z80全環境
+*		out	Z80全環境
+
+		st.b	(FromBP)
+		subq.w	#1,a3
+		movem.l	d0/d2-d7/a0-a6,-(sp)
+		lea	BreakTable,a6
+		move.l	a3,d0
+		sub.l	a5,d0
+		moveq.l	#BPMAX,d2
+		moveq.l	#0,d3
+@@:
+		cmp.w	BP_Adr(a6),d0
+		beq	@f
+		lea	SizeOfBP(a6),a6
+		addq.w	#1,d3
+		dbra	d2,@b
+		bra	BPZ80Debugger_NotBP
+@@:
+		move.b	BP_Orig(a6),(a3)
+		pea	BreakPoint_mes(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+		move.l	d3,d0
+		bsr	Print1BreakPoint
+		moveq.l	#0,d1
+		move.b	BP_Orig(a6),d1
+		movem.l	(sp)+,d0/d2-d7/a0-a6
+		move.w	#1,(TraceCounter)
+		bsr	InZ80Debugger
+		addq.w	#1,a3
+		rts
+BPZ80Debugger_NotBP::
+		movem.l	(sp)+,d0/d2-d7/a0-a6
+		addq.w	#1,a3
+		move.b	(a3)+,d1
+		rts
+BreakPoint_mes::
+		dc.b	13,10,"Encount Break Pointer",13,10,0
+		.even
+
+Z80Debugger::
+*		デバッガ入口。
+*		in	Z80全環境
+*		out	Z80全環境
+
+		tst.w	(Z80DebuggerActive)
+		beq	Z80Debugger_RET
+		bpl	@f
+@@:
+		clr.b	(FromBP)
+
+InZ80Debugger::
+		movem.l	d0-d7/a0-a6,(Z80Regs)
+		move.l	a3,d0
+		sub.l	a5,d0
+		move.w	d0,(Z80Regs+ZR_PC)
+
+		jsr	RETVECT
+		bsr	DBCRT
+
+		bsr	Z80DebuggerMain
+OutZ80Debugger::
+		bsr	X1CRT
+		jsr	SETVECT
+		movem.l	(Z80Regs),d0-d7/a0-a6
+		move.l	d0,-(sp)
+		moveq.l	#0,d0
+		move.w	(Z80Regs+ZR_PC),d0
+		add.l	a5,d0
+		move.l	d0,a3
+		move.l	(sp)+,d0
+Z80Debugger_RET::
+		rts
+
+
+*---------------------------------------*
+*		画面設定		*
+*---------------------------------------*
+
+X1CRT:
+		move.w	(TXTY),d0
+		move.w	d0,(PwSCTXTY)
+		move.w	d0,(PwSCGP0Y)
+
+		move.w	#18,-(sp)		* MD カーソル非表示
+		dc.w	$FF23			* DOS _CONCTRL
+		addq.l	#2,sp
+
+		move.b	F_DISP,d0
+		lea	DCRT24,a0
+		cmpi.b	#1,d0
+		beq.s	SKCRT
+		lea	DCRT31,a0
+SKCRT:
+		lea	PwCRTC00,a1		* CRTC R00
+		move.w	#9-1,d0
+X1CRT_LP:	move.w	(a0)+,(a1)+
+		dbf	d0,X1CRT_LP
+		move.b	(a0)+,PsCRTC20		* CRTC R20 L
+
+		rts
+
+DBCRT:
+		moveq.l	#0,d0
+		move.w	d0,(PwSCTXTY)
+		move.w	d0,(PwSCGP0Y)
+
+
+		move.w	#17,-(sp)		* MD カーソル表示
+		dc.w	$FF23			* DOS _CONCTRL
+		addq.l	#2,sp
+
+		lea	DCRT31DB,a0
+		lea	PwCRTC00,a1		* CRTC R00
+		move.w	#9-1,d0
+DBCRT_LP:	move.w	(a0)+,(a1)+
+		dbf	d0,DBCRT_LP
+		move.b	(a0)+,PsCRTC20		* CRTC R20 L
+
+		rts
+
+
+		.data
+DCRT24:		dc.w	113,07,20,100,447,7,31,431,27
+		dc.b	%00010001
+		.even
+DCRT31:		dc.w	137,14,28,108,567,5,40,440,27
+		dc.b	%00010010
+		.even
+DCRT31DB:	dc.w	137,14,28,124,567,5,40,552,27
+		dc.b	%00010110
+		.even
+		.text
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+Z80DebuggerMain::
+*		デバッガメインルーチン。
+*		in	なし
+*		out	なし
+
+		bsr	RemoveBreakPoint
+		moveq.l	#BPMAX,d0
+		bsr	UndefBreakPoint
+		bsr	SetDBStart
+		bsr	PrintRegs
+
+		subq.w	#1,(TraceCounter)
+		bne	Z80DebuggerMain_e
+
+ZD_lp::
+		bsr	PutPrompt
+		bsr	GetCommandLine
+		lea	(CommandLine),a1
+		move.b	(a1)+,d0
+		bsr	ToUpper
+		cmpi.b	#'Q',d0
+		beq	ZD_Q
+		cmpi.b	#'G',d0
+		beq	ZD_G
+		cmpi.b	#'T',d0
+		beq	ZD_T
+		cmpi.b	#'D',d0
+		beq	ZD_D
+		cmpi.b	#'E',d0
+		beq	ZD_E
+		cmpi.b	#'X',d0
+		beq	ZD_X
+		cmpi.b	#'B',d0
+		beq	ZD_B
+		cmpi.b	#'L',d0
+		beq	ZD_L
+		cmpi.b	#'S',d0
+		beq	ZD_S
+		cmpi.b	#'F',d0
+		beq	ZD_F
+		cmpi.b	#'M',d0
+		beq	ZD_M
+		cmpi.b	#'R',d0
+		beq	ZD_R
+		cmpi.b	#'W',d0
+		beq	ZD_W
+		cmpi.b	#'H',d0
+		beq	ZD_H
+		cmpi.b	#'!',d0
+		beq	ZD_Exec
+		bra	ZD_lp
+
+Z80DebuggerMain_e::
+		move.l	(Z80Regs+ZR_BASE),a0
+		moveq.l	#0,d0
+		move.w	(Z80Regs+ZR_PC),d0
+		add.l	d0,a0
+		move.b	(a0),(Z80Regs+ZR_07)
+		bsr	SetBreakPoint
+		bsr	SetDBEnd
+
+		rts
+
+ZD_Err_BadParameter::
+		pea	ZD_Err_BadParameter_mes(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+		bra	ZD_lp
+ZD_Err_BadParameter_mes::
+		dc.b	"Bad parameter.",13,10,0
+		.even
+
+ZD_Err_OverParameter::
+		pea	ZD_Err_OverParameter_mes(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+		bra	ZD_lp
+ZD_Err_OverParameter_mes::
+		dc.b	"Parameter range over.",13,10,0
+		.even
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+ZD_H::
+*		Hコマンド。ヘルプメニューを表示する。
+**		H
+*		in	a1	コマンドライン続き
+*		out	なし
+
+		pea	Help_mes(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+		bra	ZD_lp
+
+Help_mes::
+	dc.b   "B				:ブレークポイントの表示",13,10
+	dc.b   "B [bn] bp			:ブレークポイントの設定",13,10
+	dc.b   "BC [bn]				:ブレークポイントの削除",13,10
+	dc.b   "D [range]			:メモリ内容のダンプ",13,10
+	dc.b   "E [address] [data]		:メモリ内容の編集",13,10
+	dc.b   "F range	data			:フィルメモリ",13,10
+	dc.b   "G [=bp] [address]		:デバッグ中のプログラムの実行",13,10
+	dc.b   "H				:オンラインヘルプメッセージ",13,10
+	dc.b   "L [range]			:アセンブリリスト表示",13,10
+	dc.b   "M range	address			:メモリ内容の移動",13,10
+	dc.b   "S range (data | ",$22,"strings",$22,")	:メモリ内容の検索",13,10
+	dc.b   "Q				:X1エミュレータの終了",13,10
+	dc.b   "R filename,address		:ファイルの読み込み",13,10
+	dc.b   "T [=address] [count]		:トレース実行",13,10
+	dc.b   "W filename,range		:ファイルの書き込み",13,10
+	dc.b   "X				:レジスタ内容の表示",13,10
+	dc.b   "X reg=data			:レジスタ内容の変更",13,10
+	dc.b	13,10
+	dc.b   "bn		break point no.(0-9)",13,10
+	dc.b   "bp		break point address",13,10
+	dc.b   "range		start address,end address",13,10
+	dc.b   "reg		A,B,C,D,E,F,H,L,IXH,IXL,IYH,IYL,BC,DE,HL,IX,IY,PC,SP",13,10
+	dc.b   "		A',B',C',D',E',F',H',L',BC',DE',HL'",13,10
+	dc.b   "number		0000-FFFF,.??(register name)",13,10
+	dc.b   "operator	+,-",13,10
+	dc.b	0
+		.even
+
+
+ZD_Q::
+*		Qコマンド。DOSに戻る。
+**		Q
+*		in	a1	コマンドライン続き
+*		out	なし
+
+		bsr	SetDBEnd
+		jsr	INITFM
+		jsr	RETCRTC
+		DOS	_EXIT
+
+
+ZD_G::
+*		Gコマンド。実行を再開する。
+**		G [=Exec address] [Break address]
+*		in	a1	コマンドライン続き
+*		out	なし
+
+		bsr	SkipSpace
+		move.b	(a1),d0
+		cmpi.b	#'=',d0
+		bne	ZD_G_NoGoAdr
+		addq.w	#1,a1
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_G_Err
+ZD_G_GoAdr::
+		move.w	d0,(Z80Regs+ZR_PC)
+ZD_G_NoGoAdr::
+		bsr	SkipSpace
+		move.b	(a1),d0
+		cmpi.b	#',',d0
+		bne	ZD_G_NoSkipComma
+ZD_G_SkipComma::
+		addq.w	#1,a1
+ZD_G_NoSkipComma::
+		bsr	SkipSpace
+		tst.b	(a1)
+		beq	ZD_G_NoBreakAdr
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_G_Err
+ZD_G_BreakAdr::
+		move.w	d0,(BreakAdr)
+		move.w	#BPMAX,(BreakNo)
+		bsr	SkipSpace
+		tst.b	(a1)
+		bne	ZD_G_Err
+		move.w	(BreakNo),d0
+		move.w	(BreakAdr),d1
+		bsr	DefineBreakPoint
+ZD_G_NoBreakAdr::
+		clr.w	(Z80DebuggerActive)
+		move.w	#1,(TraceCounter)
+		bra	Z80DebuggerMain_e
+
+ZD_G_Err::
+		bra	ZD_Err_BadParameter
+
+
+ZD_T::
+*		Tコマンド。トレース実行する。
+**		T [=Exec address] [Trace Count]
+*		in	a1	コマンドライン続き
+*		out	なし
+
+		bsr	SkipSpace
+		move.b	(a1),d0
+		cmpi.b	#'=',d0
+		bne	ZD_T_NoGoAdr
+		addq.w	#1,a1
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_T_Err
+ZD_T_GoAdr::
+		move.w	d0,(Z80Regs+ZR_PC)
+ZD_T_NoGoAdr::
+		bsr	SkipSpace
+		move.b	(a1),d0
+		cmpi.b	#',',d0
+		bne	ZD_T_NoSkipComma
+ZD_T_SkipComma::
+		addq.w	#1,a1
+ZD_T_NoSkipComma::
+		bsr	SkipSpace
+		tst.b	(a1)
+		beq	ZD_T_NoTraceCount
+		bsr	GetHex
+		tst.l	d0
+		beq	ZD_T_Err
+		bmi	ZD_T_Err
+		move.l	d0,-(sp)
+		bsr	SkipSpace
+		move.l	(sp)+,d0
+		tst.b	(a1)
+		bne	ZD_T_Err
+		bra	ZD_T_TraceCount
+ZD_T_NoTraceCount::
+		moveq.l	#1,d0
+ZD_T_TraceCount::
+		move.w	d0,(TraceCounter)
+		bsr	SkipSpace
+		tst.b	(a1)
+		bne	ZD_T_Err
+
+		bra	Z80DebuggerMain_e
+
+ZD_T_Err::
+		bra	ZD_Err_BadParameter
+
+
+ZD_D::
+*		Dコマンド。ダンプする。
+**		D [Start address] [End Address]
+*		in	a1	コマンドライン続き
+*		out	なし
+
+		bsr	SkipSpace
+		tst.b	(a1)
+		beq	ZD_D_NoStartAdr
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_D_Err
+ZD_D_StartAdr::
+		move.w	d0,(DumpStartAdr)
+ZD_D_NoStartAdr::
+		bsr	SkipSpace
+		tst.b	(a1)
+		beq	ZD_D_NoEndAdr
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_D_Err
+		bra	ZD_D_EndAdr
+ZD_D_NoEndAdr::
+		move.w	(DumpStartAdr),d0
+		add.w	#$7f,d0
+ZD_D_EndAdr::
+		move.w	d0,(DumpEndAdr)
+		bsr	SkipSpace
+		tst.b	(a1)
+		bne	ZD_D_Err
+
+		bsr	DumpMain
+
+		bra	ZD_lp
+
+ZD_D_Err::
+		bra	ZD_Err_BadParameter
+
+
+ZD_E::
+*		Eコマンド。エディットする。
+**		E [Start address]
+*		in	a1	コマンドライン続き
+*		out	なし
+
+		bsr	SkipSpace
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_E_NoStartAdr
+ZD_E_StartAdr::
+		move.w	d0,(EditStartAdr)
+ZD_E_NoStartAdr::
+		bsr	SkipSpace
+		tst.b	(a1)
+		bne	ZD_E_Err
+
+		bsr	EditMain
+
+		bra	ZD_lp
+
+ZD_E_Err::
+		bra	ZD_Err_BadParameter
+
+
+ZD_X::
+*		Xコマンド。レジスタを表示・エディットする。
+**		X [Reg=Data]
+*		in	a1	コマンドライン続き
+*		out	なし
+
+		bsr	SkipSpace
+		tst.b	(a1)
+		beq	ZD_X_Disp
+		bsr	GetReg
+		tst.l	d0
+		bmi	ZD_X_Err
+		tst.w	d0
+		bmi	ZD_X_Err
+		move.w	d0,(EditRegName)
+		move.w	d1,(EditRegSize)
+		bsr	SkipSpace
+		move.b	(a1),d0
+		cmpi.b	#'=',d0
+		bne	ZD_X_NoSkipEqual
+ZD_X_SkipEqual::
+		addq.w	#1,a1
+ZD_X_NoSkipEqual::
+		bsr	SkipSpace
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_X_Err
+		move.w	d0,(EditRegParam)
+		bsr	SkipSpace
+		tst.b	(a1)
+		bne	ZD_X_Err
+
+		bsr	EditRegMain
+
+		bra	ZD_lp
+
+ZD_X_Disp::
+		bsr	PrintRegs
+		bra	ZD_lp
+
+ZD_X_Err::
+		bra	ZD_Err_BadParameter
+
+
+ZD_B::
+*		Bコマンド。ブレークポインタを設定／表示する。
+*		B [BreakNo BreakAdr]
+*		BC [BreakNo]
+*		in	a1	コマンドライン続き
+*		out	なし
+
+		bsr	SkipSpace
+		move.b	(a1),d0
+		beq	ZD_B_Disp
+		cmpi.b	#'.',d0
+		beq	ZD_B_NoBreakNo
+		bsr	ToUpper
+		cmpi.b	#'C',d0
+		beq	ZD_BC
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_B_Err
+		bra	ZD_B_BreakNo
+ZD_B_NoBreakNo::
+		moveq.l	#-1,d0
+ZD_B_BreakNo::
+		move.w	d0,(BreakNo)
+
+		bsr	SkipSpace
+		tst.b	(a1)
+		beq	ZD_B_NoBreakAdr
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_B_Err
+		move.w	d0,(BreakAdr)
+		bra	ZD_B_BreakAdr
+ZD_B_NoBreakAdr::
+		move.w	(BreakNo),(BreakAdr)
+		move.w	#-1,(BreakNo)
+ZD_B_BreakAdr::
+		bsr	SkipSpace
+		tst.b	(a1)
+		bne	ZD_B_Err
+
+		move.w	(BreakNo),d0
+		move.w	(BreakAdr),d1
+		cmpi.w	#BPMAX,d0
+		bge	ZD_B_Err
+		bsr	DefineBreakPoint
+		tst.l	d0
+		bmi	ZD_lp
+		bsr	Print1BreakPoint
+
+		bra	ZD_lp
+
+ZD_BC::
+		addq.w	#1,a1
+		bsr	SkipSpace
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_BC_NoBreakNo
+		bra	ZD_BC_BreakNo
+ZD_BC_NoBreakNo::
+		moveq.l	#-1,d0
+ZD_BC_BreakNo::
+		move.w	d0,(BreakNo)
+		bsr	SkipSpace
+		tst.b	(a1)
+		bne	ZD_B_Err
+
+		move.w	(BreakNo),d0
+		cmpi.w	#BPMAX,d0
+		bge	ZD_B_Err
+		bsr	UndefBreakPoint
+
+		bra	ZD_lp
+
+ZD_B_Disp::
+		bsr	PrintBreakPoint
+		bra	ZD_lp
+
+ZD_B_Err::
+		bra	ZD_Err_BadParameter
+
+
+ZD_L::
+*		Lコマンド。ディスアセンブルする。
+**		L [Start address] [End Address]
+*		in	a1	コマンドライン続き
+*		out	なし
+
+		bsr	SkipSpace
+		tst.b	(a1)
+		beq	ZD_L_NoStartAdr
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_L_Err
+ZD_L_StartAdr::
+		move.w	d0,(DisStartAdr)
+ZD_L_NoStartAdr::
+		bsr	SkipSpace
+		tst.b	(a1)
+		beq	ZD_L_NoEndAdr
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_L_Err
+		bra	ZD_L_EndAdr
+ZD_L_NoEndAdr::
+		move.w	(DisStartAdr),d0
+		add.w	#$10,d0
+ZD_L_EndAdr::
+		move.w	d0,(DisEndAdr)
+		bsr	SkipSpace
+		tst.b	(a1)
+		bne	ZD_L_Err
+
+		bsr	DisMain
+
+		bra	ZD_lp
+
+ZD_L_Err::
+		bra	ZD_Err_BadParameter
+
+
+ZD_F::
+*		Fコマンド。メモリを埋める。
+**		F [Start address] [End Address] [Fill Data]
+*		in	a1	コマンドライン続き
+*		out	なし
+
+		bsr	SkipSpace
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_F_Err
+		move.w	d0,(FillStartAdr)
+		bsr	SkipSpace
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_F_Err
+		move.w	d0,(FillEndAdr)
+		bsr	SkipSpace
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_F_Err
+		move.w	d0,(FillData)
+		bsr	SkipSpace
+		tst.b	(a1)
+		bne	ZD_F_Err
+
+		bsr	FillMain
+
+		bra	ZD_lp
+
+ZD_F_Err::
+		bra	ZD_Err_BadParameter
+
+
+ZD_M::
+*		Mコマンド。メモリデータを移動する。
+**		M [Start address] [End Address] [Move To Address]
+*		in	a1	コマンドライン続き
+*		out	なし
+
+		bsr	SkipSpace
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_M_Err
+		move.w	d0,(MoveStartAdr)
+		bsr	SkipSpace
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_M_Err
+		move.w	d0,(MoveEndAdr)
+		bsr	SkipSpace
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_M_Err
+		move.w	d0,(MoveToAdr)
+		bsr	SkipSpace
+		tst.b	(a1)
+		bne	ZD_M_Err
+
+		bsr	MoveMain
+
+		bra	ZD_lp
+
+ZD_M_Err::
+		bra	ZD_Err_BadParameter
+
+
+ZD_S::
+*		Sコマンド。メモリからデータ列を検索する。
+**		S [Start address] [End Address] [Search Datas...]
+*		in	a1	コマンドライン続き
+*		out	なし
+
+		bsr	SkipSpace
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_S_Err
+		move.w	d0,(SearchStartAdr)
+		bsr	SkipSpace
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_S_Err
+		move.w	d0,(SearchEndAdr)
+		moveq.l	#0,d2
+		lea	SearchData,a2
+		bsr	SkipSpace
+		cmpi.b	#'"',(a1)
+		beq	ZD_S_Str
+ZD_S_Bin::
+ZD_S_Bin_1::
+		tst.b	d2
+		bmi	ZD_S_Err2
+		bsr	SkipSpace
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_S_Bin_2
+		move.b	d0,(a2)+
+		addq.w	#1,d2
+		bra	ZD_S_Bin_1
+ZD_S_Bin_2::
+		tst.w	d2
+		beq	ZD_S_Err2
+		bra	ZD_S_OK
+
+ZD_S_Str::
+		addq.w	#1,a1
+ZD_S_Str_1::
+		tst.b	d2
+		bmi	ZD_S_Err2
+		move.b	(a1)+,d0
+		beq	ZD_S_Str_2_
+		cmpi.b	#'"',d0
+		beq	ZD_S_Str_2
+		move.b	d0,(a2)+
+		addq.w	#1,d2
+		bra	ZD_S_Str_1
+ZD_S_Str_2_::
+		subq.w	#1,a1
+ZD_S_Str_2::
+		tst.w	d2
+		beq	ZD_S_Err2
+		bsr	SkipSpace
+		tst.b	(a1)
+		bne	ZD_S_Err
+
+ZD_S_OK::
+		move.w	d2,(SearchCount)
+
+		bsr	SearchMain
+
+		bra	ZD_lp
+
+ZD_S_Err::
+		bra	ZD_Err_BadParameter
+ZD_S_Err2::
+		bra	ZD_Err_OverParameter
+
+
+ZD_R::
+*		Rコマンド。Z80のメモリ部分にデータを読み込む。
+**		R [FileName],[Start address]
+*		in	a1	コマンドライン続き
+*		out	なし
+
+		bsr	SkipSpace
+		bsr	GetFileName
+		tst.l	d0
+		bmi	ZD_R_Err
+		bsr	SkipSpace
+		cmpi.b	#',',(a1)
+		bne	ZD_R_Err
+		addq.w	#1,a1
+		bsr	SkipSpace
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_R_Err
+		move.w	d0,(LoadStartAdr)
+		bsr	SkipSpace
+		tst.b	(a1)
+		bne	ZD_R_Err
+
+		bsr	LoadMain
+
+		bra	ZD_lp
+
+ZD_R_Err::
+		bra	ZD_Err_BadParameter
+
+
+ZD_W::
+*		Wコマンド。Z80のメモリ部分のデータを書き出す。
+**		W [FileName],[Start address] [End Address]
+*		in	a1	コマンドライン続き
+*		out	なし
+
+		bsr	SkipSpace
+		bsr	GetFileName
+		tst.l	d0
+		bmi	ZD_W_Err
+		bsr	SkipSpace
+		cmpi.b	#',',(a1)
+		bne	ZD_W_Err
+		addq.w	#1,a1
+		bsr	SkipSpace
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_W_Err
+		move.w	d0,(SaveStartAdr)
+		bsr	SkipSpace
+		bsr	GetHex
+		tst.l	d0
+		bmi	ZD_W_Err
+		move.w	d0,(SaveEndAdr)
+		bsr	SkipSpace
+		tst.b	(a1)
+		bne	ZD_W_Err
+
+		bsr	SaveMain
+
+		bra	ZD_lp
+
+ZD_W_Err::
+		bra	ZD_Err_BadParameter
+
+
+ZD_Exec::
+*		!コマンド。コマンドラインを起動する。
+**		! [Command lime]
+*		in	a1	コマンドライン続き
+*		out	なし
+
+		bsr	ExecMain
+		bra	ZD_lp
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+ExecMain::
+*		コマンドラインを起動する。
+*		in	なし
+*		out	なし
+
+		movem.l	d0-d7/a0-a6,-(sp)
+
+		lea	CommandLine+1,a1
+		bsr	SkipSpace
+		pea	ExecCmdLineBuf
+		clr.l	-(sp)
+		pea	ShellName(pc)
+		DOS	_GETENV
+		lea	12(sp),sp
+		tst.l	d0
+		bpl	ExecMain_2
+		lea	CommandX,a0
+		lea	ExecCmdLineBuf,a2
+ExecMain_1::
+		move.b	(a0)+,(a2)+
+		bne	ExecMain_1
+ExecMain_2::
+		lea	ExecCmdLineBuf,a2
+ExecMain_3::
+		tst.b	(a2)+
+		bne	ExecMain_3
+		move.b	#' ',-1(a2)
+		
+ExecMain_4::
+		move.b	(a1)+,(a2)+
+		bne	ExecMain_4
+		clr.l	-(sp)
+		pea	CommandLine
+		pea	ExecCmdLineBuf
+		move.w	#2,-(sp)
+		DOS	_EXEC
+		tst.l	d0
+		bmi	Exec_Err
+		clr.w	(sp)
+		DOS	_EXEC
+		tst.l	d0
+		bmi	Exec_Err
+Exec_e::
+		lea	14(sp),sp
+		movem.l	(sp)+,d0-d7/a0-a6
+		rts
+
+Exec_Err::
+		pea	Exec_Err_mes(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+		bra	Exec_e
+
+Exec_Err_mes::
+		dc.b	"Cannot execute.",13,10,7,0
+ShellName::
+		dc.b	"SHELL",0
+CommandX::
+		dc.b	"COMMAND.X",0
+		.even
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+SaveMain::
+*		メモリからファイルへデータを書き出す。
+*		in	なし
+*		out	なし
+
+		movem.l	d0-d7/a0-a6,-(sp)
+
+		move.l	(Z80Regs+ZR_BASE),a1
+		moveq.l	#0,d1
+		move.w	(SaveStartAdr),d1
+		moveq.l	#0,d2
+		move.w	(SaveEndAdr),d2
+		sub.w	d1,d2
+		addq.l	#1,d2
+
+		move.w	#$20,-(sp)
+		pea	FileNameBuf
+		DOS	_CREATE
+		addq.w	#6,sp
+		move.l	d0,d7
+		bmi	SaveMain_Err_FileOpen
+
+		move.l	d2,-(sp)
+		pea	(a1,d1.l)
+		move.w	d7,-(sp)
+		DOS	_WRITE
+		addq.w	#6,sp
+		cmp.l	(sp)+,d0
+		bne	SaveMain_Err_FileRead
+
+		move.w	d7,-(sp)
+		DOS	_CLOSE
+		addq.w	#2,sp
+SaveMain_e::
+		movem.l	(sp)+,d0-d7/a0-a6
+		rts
+
+SaveMain_Err_FileOpen::
+		pea	SaveMain_Err_FileOpen_mes(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+		bra	SaveMain_e
+SaveMain_Err_FileOpen_mes::
+		dc.b	"Cannot create file.",13,10,7,0
+		.even
+
+SaveMain_Err_FileRead::
+		pea	SaveMain_Err_FileRead_mes(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+		bra	SaveMain_e
+SaveMain_Err_FileRead_mes::
+		dc.b	"Cannot write file.",13,10,7,0
+		.even
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+LoadMain::
+*		ファイルからメモリへデータを読み込む。
+*		in	なし
+*		out	なし
+
+		movem.l	d0-d7/a0-a6,-(sp)
+
+		move.l	(Z80Regs+ZR_BASE),a1
+		moveq.l	#0,d1
+		move.w	(LoadStartAdr),d1
+		move.l	d1,d2
+		not.w	d2
+		addq.l	#1,d2
+
+		clr.w	-(sp)
+		pea	FileNameBuf
+		DOS	_OPEN
+		addq.w	#6,sp
+		move.l	d0,d7
+		bmi	LoadMain_Err_FileOpen
+
+		move.w	#2,-(sp)
+		clr.l	-(sp)
+		move.w	d7,-(sp)
+		DOS	_SEEK
+		addq.w	#8,sp
+		move.l	d0,d6
+		bmi	LoadMain_Err_FileRead
+		clr.w	-(sp)
+		clr.l	-(sp)
+		move.w	d7,-(sp)
+		DOS	_SEEK
+		addq.w	#8,sp
+
+		cmp.l	d2,d6
+		bcs	@f
+		move.l	d2,d6
+
+		move.l	d6,-(sp)
+		pea	(a1,d1.l)
+		move.w	d7,-(sp)
+		DOS	_READ
+		addq.w	#6,sp
+		cmp.l	(sp)+,d0
+		bne	LoadMain_Err_FileRead
+
+		move.w	d7,-(sp)
+		DOS	_CLOSE
+		addq.w	#2,sp
+LoadMain_e::
+		movem.l	(sp)+,d0-d7/a0-a6
+		rts
+
+LoadMain_Err_FileOpen::
+		pea	LoadMain_Err_FileOpen_mes(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+		bra	LoadMain_e
+LoadMain_Err_FileOpen_mes::
+		dc.b	"Cannot open file.",13,10,7,0
+		.even
+
+LoadMain_Err_FileRead::
+		pea	LoadMain_Err_FileRead_mes(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+		bra	LoadMain_e
+LoadMain_Err_FileRead_mes::
+		dc.b	"Cannot read file.",13,10,7,0
+		.even
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+MoveMain::
+*		メモリからメモリへデータを移動する。
+*		in	なし
+*		out	なし
+
+		movem.l	d0-d7/a0-a6,-(sp)
+
+		move.l	(Z80Regs+ZR_BASE),a1
+		move.w	(MoveStartAdr),d1
+		move.w	(MoveToAdr),d2
+		move.w	(MoveEndAdr),d3
+		sub.w	d1,d3
+		cmp.w	d1,d2
+		bcs	MoveMain_S2E
+MoveMain_E2S::
+		add.w	d3,d1
+		add.w	d3,d2
+		moveq.l	#-1,d4
+		bra	MoveMain_1
+MoveMain_S2E::
+		moveq.l	#1,d4
+MoveMain_1::
+		move.b	(a1,d1.l),(a1,d2.l)
+		add.w	d4,d1
+		add.w	d4,d2
+		dbra	d3,MoveMain_1
+
+		movem.l	(sp)+,d0-d7/a0-a6
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+SearchMain::
+*		メモリから指定データを捜し出す。
+*		in	なし
+*		out	なし
+
+		movem.l	d0-d7/a0-a6,-(sp)
+
+		move.l	(Z80Regs+ZR_BASE),a1
+		move.w	(SearchStartAdr),d1
+		move.w	(SearchEndAdr),d2
+Search_lp::
+		lea	SearchData,a2
+		move.w	(SearchCount),d3
+		move.l	d1,d4
+Search_lp2::
+		move.b	(a1,d1.l),d0
+		cmp.b	(a2)+,d0
+		bne	Search_NE
+		addq.w	#1,d1
+		subq.w	#1,d3
+		bne	Search_lp2
+Search_OK::
+		move.l	d4,d1
+		bsr	Print04Hex
+		bsr	PrintSpace
+		bsr	PrintSpace
+		bsr	PrintSpace
+		bsr	PrintSpace
+Search_NE::
+		move.l	d4,d1
+		addq.w	#1,d1
+		cmp.w	d1,d2
+		bne	Search_lp
+Search_e::
+		bsr	PrintCRLF
+
+		movem.l	(sp)+,d0-d7/a0-a6
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+FillMain::
+*		メモリを指定データで埋める。
+*		in	なし
+*		out	なし
+
+		movem.l	d0-d7/a0-a6,-(sp)
+
+		move.l	(Z80Regs+ZR_BASE),a1
+		move.w	(FillStartAdr),d1
+		move.w	(FillEndAdr),d2
+		move.w	(FillData),d3
+Fill_lp::
+		move.b	d3,(a1,d1.l)
+		cmp.w	d1,d2
+		beq	Fill_lp_e
+		addq.w	#1,d1
+		bra	Fill_lp
+Fill_lp_e::
+
+		movem.l	(sp)+,d0-d7/a0-a6
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+DumpMain::
+*		ダンプ表示を行なう。
+*		in	なし
+*		out	なし
+
+		bsr	Dump1Line
+		move.w	(DumpStartAdr),d0
+		addq.w	#1,(DumpStartAdr)
+		cmp.w	(DumpEndAdr),d0
+		bne	DumpMain
+		rts
+
+Dump1Line::
+		movem.l	d1-d7/a0-a6,-(sp)
+
+		moveq.l	#0,d3
+
+		move.l	(Z80Regs+ZR_BASE),a1
+		moveq.l	#0,d7
+		move.w	(DumpStartAdr),d7
+		move.w	(DumpEndAdr),d6
+		sub.w	d7,d6
+		cmpi.w	#15,d6
+		bcs	@f
+		moveq.l	#15,d6
+@@:
+
+		move.w	d7,d1
+		bsr	Print04Hex
+		bsr	PrintSpace
+
+		move.w	d6,d2
+		move.w	d7,d3
+Dump1Line_lp::
+		bsr	PrintSpace
+		moveq.l	#0,d1
+		move.b	(a1,d3.l),d1
+		addq.w	#1,d3
+		bsr	Print02Hex
+		dbra	d2,Dump1Line_lp
+
+Dump1Line_2::
+		moveq.l	#15,d2
+		sub.w	d6,d2
+		mulu	#3,d2
+		addq.w	#2,d2
+Dump1Line_lp2::
+		bsr	PrintSpace
+		dbra	d2,Dump1Line_lp2
+
+		move.w	d6,d2
+		move.w	d7,d3
+		moveq.l	#0,d4
+		moveq.l	#0,d1
+Dump1Line_lp3::
+		move.b	(a1,d3.l),d1
+		addq.w	#1,d3
+		cmpi.b	#' '-1,d1
+		bcc	Dump1Line_lp3_1
+		bra	Dump1Line_lp3_7
+Dump1Line_lp3_1::
+		tst.b	d4
+		bne	Dump1Line_lp3_8
+		tst.b	d1
+		bpl	Dump1Line_lp3_9
+		cmpi.b	#$a0,d1
+		bcs	Dump1Line_lp3_2
+		cmpi.b	#$e0,d1
+		bcs	Dump1Line_lp3_9
+Dump1Line_lp3_2::
+		move.b	(a1,d3.l),d0
+		cmpi.b	#$40,d0
+		bcs	Dump1Line_lp3_7
+		moveq.l	#1,d4
+		bra	Dump1Line_lp3_9
+Dump1Line_lp3_7::
+		moveq.l	#'.',d1
+Dump1Line_lp3_8::
+		moveq.l	#0,d4
+Dump1Line_lp3_9::
+		move.w	d1,-(sp)
+		DOS	_PUTCHAR
+		addq.w	#2,sp
+		moveq.l	#0,d1
+
+Dump1Line_lp3_0::
+		dbra	d2,Dump1Line_lp3
+
+		tst.b	d4
+		beq	Dump1Line_4
+		move.b	(a1,d3.l),d1
+		move.w	d1,-(sp)
+		DOS	_PUTCHAR
+		addq.w	#2,sp
+
+Dump1Line_4::
+		bsr	PrintCRLF
+		add.w	d6,(DumpStartAdr)
+
+		movem.l	(sp)+,d1-d7/a0-a6
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+DisMain::
+*		ディスアセンブル表示を行なう。
+*		in	なし
+*		out	なし
+
+		bsr	PrintSpace
+		bsr	Dis1Line
+		move.w	(DisStartAdr),d0
+		cmp.w	(DisEndAdr),d0
+		bcs	DisMain
+		rts
+
+Dis1Line::
+		movem.l	d1-d7/a0-a6,-(sp)
+
+		moveq.l	#0,d3
+
+		move.l	(Z80Regs+ZR_BASE),a1
+		moveq.l	#0,d7
+		move.w	(DisStartAdr),d7
+		move.w	(DisEndAdr),d6
+		sub.w	d7,d6
+		cmpi.w	#15,d6
+		bcs	@f
+		moveq.l	#15,d6
+@@:
+
+		move.w	d7,d1
+		bsr	PrintSpace
+		bsr	Print04Hex
+		bsr	PrintSpace
+		bsr	PrintSpace
+
+		move.w	d7,d1
+		.xref	DisAssemble
+		bsr	DisAssemble
+
+		move.l	d0,-(sp)
+		move.w	d7,d3
+		move.w	d0,d2
+		subq.w	#1,d2
+@@:
+		move.b	(a1,d3.l),d1
+		addq.w	#1,d3
+		bsr	Print02Hex
+		bsr	PrintSpace
+		dbra	d2,@b
+
+		moveq.l	#4,d2
+		sub.l	(sp),d2
+@@:
+		bsr	PrintSpace
+		bsr	PrintSpace
+		bsr	PrintSpace
+		dbra	d2,@b
+		move.l	(sp)+,d0
+
+		add.w	d0,(DisStartAdr)
+		move.l	a0,-(sp)
+		DOS	_PRINT
+		addq.w	#4,sp
+		bsr	PrintCRLF
+
+		movem.l	(sp)+,d1-d7/a0-a6
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+EditMain::
+*		メモリ編集を行なう。
+*		in	なし
+*		out	なし
+
+		bsr	Edit1Byte
+		tst.l	d0
+		bpl	EditMain
+		rts
+
+Edit1Byte::
+		movem.l	d1-d7/a0-a6,-(sp)
+		move.l	(Z80Regs+ZR_BASE),a2
+		moveq.l	#0,d7
+		move.w	(EditStartAdr),d7
+
+		move.w	d7,d1
+		bsr	Print04Hex
+		bsr	PrintSpace
+		bsr	PrintSpace
+		moveq.l	#0,d1
+		move.b	(a2,d7.l),d1
+		bsr	Print02Hex
+		bsr	PrintSpace
+
+		bsr	GetCommandLine
+		lea	CommandLine,a1
+		bsr	SkipSpace
+		move.b	(a1),d0
+		beq	Edit1Byte_Skip
+		tst.b	1(a1)
+		bne	Edit1Byte_Num
+		cmpi.b	#'-',d0
+		beq	Edit1Byte_Back
+		cmpi.b	#'.',d0
+		beq	Edit1Byte_End
+Edit1Byte_Num::
+		bsr	GetHex
+		tst.l	d0
+		bmi	Edit1Byte_Err
+		move.b	d0,(a2,d7.l)
+Edit1Byte_Skip::
+		addq.w	#1,(EditStartAdr)
+		moveq.l	#0,d0
+		bra	Edit1Byte_e
+Edit1Byte_Back::
+		subq.w	#1,(EditStartAdr)
+		moveq.l	#0,d0
+		bra	Edit1Byte_e
+Edit1Byte_Err::
+		pea	Edit1Byte_Err_mes(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+		moveq.l	#0,d0
+		bra	Edit1Byte_e
+Edit1Byte_End::
+		subq.w	#1,(EditStartAdr)
+		moveq.l	#-1,d0
+Edit1Byte_e::
+		movem.l	(sp)+,d1-d7/a0-a6
+		rts
+
+Edit1Byte_Err_mes::
+		dc.b	'Bad Data.',7,13,10,0
+		.even
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+EditRegMain::
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+SetDBStart::
+*		デバッガスタート時処理。
+*		in	なし
+*		out	なし
+
+		move.w	(Z80Regs+ZR_PC),d0
+		move.w	d0,(DumpStartAdr)
+		move.w	d0,(EditStartAdr)
+		move.w	d0,(DisStartAdr)
+
+		lea	4(sp),a0
+		move.l	a0,(DBErrRetSP)
+		move.l	a0,(DBBreakRetSP)
+		move.w	sr,d0
+		move.w	d0,(DBErrRetSR)
+		move.w	d0,(DBBreakRetSR)
+		pea	DBErrPtr
+		move.w	#$fff2,-(sp)
+		DOS	_INTVCS
+		addq.w	#6,sp
+		move.l	d0,(ErrJobAdr)
+		pea	DBBreakPtr
+		move.w	#$fff1,-(sp)
+		DOS	_INTVCS
+		addq.w	#6,sp
+		move.l	d0,(BreakJobAdr)
+
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+SetDBEnd::
+*		デバッガエンド時処理。
+*		in	なし
+*		out	なし
+
+		move.l	(ErrJobAdr),-(sp)
+		move.w	#$fff2,-(sp)
+		DOS	_INTVCS
+		addq.w	#6,sp
+		move.l	(BreakJobAdr),-(sp)
+		move.w	#$fff1,-(sp)
+		DOS	_INTVCS
+		addq.w	#6,sp
+
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+DBErrPtr::
+*		デバッガエラー時処理。
+*		in	なし
+*		out	なし
+
+		move.l	(DBErrRetSP),sp
+		move.w	(DBErrRetSR),d0
+		move.w	d0,sr
+
+		pea	DBErr_mes(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+		bra	ZD_lp
+
+DBErr_mes::
+		dc.b	13,10,0
+		.even
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+DBBreakPtr::
+*		デバッガ中断時処理。
+*		in	なし
+*		out	なし
+
+		move.l	(DBBreakRetSP),sp
+		move.w	(DBBreakRetSR),d0
+		move.w	d0,sr
+
+		pea	DBBreak_mes(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+		bra	ZD_lp
+
+DBBreak_mes::
+		dc.b	13,10,0
+		.even
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+PutPrompt::
+*		プロンプト表示。
+*		in	なし
+*		out	なし
+
+		pea	Prompt_mes(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+		rts
+
+Prompt_mes::
+		dc.b	'DB>',0
+		.even
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+GetCommandLine::
+*		１行入力。
+*		in	なし
+*		out	なし
+
+		move.b	#255,(CommandLine-2)
+		pea	(CommandLine-2)
+		DOS	_GETS
+		addq.w	#4,sp
+		bsr	PrintCRLF
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+GetHex::
+*		16進数値を得る。
+*		in	a1	文字列へのポインタ
+*		out	d0	数値（負でエラー）
+*			a1	文字列解析終了位置
+
+		movem.l	d1-d7/a0/a2-a6,-(sp)
+
+		clr.w	(GetHex_Work)
+		clr.w	(GetHex_Mode)
+
+GetHex_0::
+		moveq.l	#0,d1
+		moveq.l	#0,d0
+		move.b	(a1)+,d0
+
+		cmpi.b	#'.',d0
+		beq	GetHex_Reg
+		cmpi.b	#'-',d0
+		beq	GetHex_3_Minus
+		cmpi.b	#'0',d0
+		bcs	GetHex_Err
+		cmpi.b	#'9'+1,d0
+		bcs	GetHex_1_Num
+
+		bsr	ToUpper
+		cmpi.b	#'A',d0
+		bcs	GetHex_Err
+		cmpi.b	#'F'+1,d0
+		bcc	GetHex_Err
+		subi.b	#'A'-('9'+1),d0
+GetHex_1_Num::
+		sub.b	#'0',d0
+		lsl.w	#4,d1
+		add.w	d0,d1
+
+GetHex_lp::
+		moveq.l	#0,d0
+		move.b	(a1)+,d0
+
+		cmpi.b	#'0',d0
+		bcs	GetHex_3
+		cmpi.b	#'9'+1,d0
+		bcs	GetHex_2_Num
+
+		bsr	ToUpper
+		cmpi.b	#'A',d0
+		bcs	GetHex_e
+		cmpi.b	#'F'+1,d0
+		bcc	GetHex_e
+		subi.b	#'A'-('9'+1),d0
+GetHex_2_Num::
+		sub.b	#'0',d0
+		lsl.w	#4,d1
+		add.w	d0,d1
+		bra	GetHex_lp
+
+GetHex_Reg::
+		lea	Z80Regs,a0
+		bsr	GetReg
+		addq.w	#1,a1
+		tst.l	d0
+		bmi	GetHex_Err
+		tst.w	d0
+		bmi	GetHex_Err
+		cmpi.w	#2,d1
+		beq	GexHex_Reg_2
+GexHex_Reg_1::
+		move.b	(a0,d0.w),d1
+		bra	GetHex_3
+GexHex_Reg_2::
+		move.w	(a0,d0.w),d1
+		bra	GetHex_3
+
+GetHex_3::
+		tst.w	(GetHex_Mode)
+		beq	GetHex_3_1
+		neg.w	d1
+GetHex_3_1::
+		add.w	d1,(GetHex_Work)
+		move.b	-1(a1),d0
+		cmpi.b	#'+',d0
+		beq	GetHex_3_Plus
+		cmpi.b	#'-',d0
+		beq	GetHex_3_Minus
+		move.w	(GetHex_Work),d1
+		bra	GetHex_e
+GetHex_3_Plus::
+		clr.w	(GetHex_Mode)
+		bra	GetHex_0
+GetHex_3_Minus::
+		move.w	#-1,(GetHex_Mode)
+		bra	GetHex_0
+GetHex_Err::
+		moveq.l	#-1,d1
+GetHex_e::
+		move.l	d1,d0
+		subq.w	#1,a1
+
+		movem.l	(sp)+,d1-d7/a0/a2-a6
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+GetReg::
+*		レジスタ名を得る。
+*		in	a1	文字列へのポインタ
+*		out	d0	レジスタ名（Z80Regsからのオフセット）（負でエラー）
+*			d1	レジスタサイズ
+*			a1	文字列解析終了位置
+
+		movem.l	d2-d7/a0/a2-a6,-(sp)
+
+		lea	RegNameBuf,a2
+
+GetReg_lp::
+		move.b	(a1)+,d0
+		cmpi.b	#"'",d0
+		beq	GetReg_1
+		bsr	ToUpper
+		cmpi.b	#'A',d0
+		bcs	GetReg_2
+		cmpi.b	#'Z'+1,d0
+		bcc	GetReg_2
+GetReg_1::
+		move.b	d0,(a2)+
+		bra	GetReg_lp
+GetReg_2::
+		clr.b	(a2)
+
+		lea	RegNameTable(pc),a3
+		move.l	a3,a4
+		moveq.l	#0,d1
+		moveq.l	#0,d2
+		moveq.l	#0,d3
+		moveq.l	#0,d4
+GetReg_lp2::
+		movem.w	(a3)+,d0-d2
+		tst.w	d1
+		beq	GetReg_Err
+		lea	(a4,d2.w),a0
+		lea	RegNameBuf,a2
+GetReg_lp3::
+		cmpm.b	(a0)+,(a2)+
+		bne	GetReg_lp2
+		tst.b	-1(a0)
+		bne	GetReg_lp3
+		bra	GetReg_e
+GetReg_Err::
+		moveq.l	#-1,d0
+GetReg_e::
+		subq.w	#1,a1
+
+		movem.l	(sp)+,d2-d7/a0/a2-a6
+		rts
+
+RegNameTable::
+		dc.w	    -1,2,RegName_AF_-RegNameTable
+		dc.w	ZR_BC_,2,RegName_BC_-RegNameTable
+		dc.w	ZR_DE_,2,RegName_DE_-RegNameTable
+		dc.w	ZR_HL_,2,RegName_HL_-RegNameTable
+		dc.w	    -2,2,RegName_AF-RegNameTable
+		dc.w	ZR_BC,2,RegName_BC-RegNameTable
+		dc.w	ZR_DE,2,RegName_DE-RegNameTable
+		dc.w	ZR_HL,2,RegName_HL-RegNameTable
+		dc.w	ZR_IX,2,RegName_IX-RegNameTable
+		dc.w	ZR_IY,2,RegName_IY-RegNameTable
+		dc.w	ZR_PC,2,RegName_PC-RegNameTable
+		dc.w	ZR_SP,2,RegName_SP-RegNameTable
+		dc.w	ZR_A_,1,RegName_A_-RegNameTable
+		dc.w	ZR_B_,1,RegName_B_-RegNameTable
+		dc.w	ZR_C_,1,RegName_C_-RegNameTable
+		dc.w	ZR_D_,1,RegName_D_-RegNameTable
+		dc.w	ZR_E_,1,RegName_E_-RegNameTable
+		dc.w	ZR_F_,1,RegName_F_-RegNameTable
+		dc.w	ZR_H_,1,RegName_H_-RegNameTable
+		dc.w	ZR_L_,1,RegName_L_-RegNameTable
+		dc.w	ZR_A,1,RegName_A-RegNameTable
+		dc.w	ZR_B,1,RegName_B-RegNameTable
+		dc.w	ZR_C,1,RegName_C-RegNameTable
+		dc.w	ZR_D,1,RegName_D-RegNameTable
+		dc.w	ZR_E,1,RegName_E-RegNameTable
+		dc.w	ZR_F,1,RegName_F-RegNameTable
+		dc.w	ZR_I,1,RegName_I-RegNameTable
+		dc.w	ZR_H,1,RegName_H-RegNameTable
+		dc.w	ZR_L,1,RegName_L-RegNameTable
+		dc.w	ZR_IXH,1,RegName_IXH-RegNameTable
+		dc.w	ZR_IXL,1,RegName_IXL-RegNameTable
+		dc.w	ZR_IYH,1,RegName_IYH-RegNameTable
+		dc.w	ZR_IYL,1,RegName_IYL-RegNameTable
+		dc.w	0,0,0
+
+RegName_AF_::	dc.b	"AF'",0
+RegName_BC_::	dc.b	"BC'",0
+RegName_DE_::	dc.b	"DE'",0
+RegName_HL_::	dc.b	"HL'",0
+RegName_AF::	dc.b	"AF",0
+RegName_BC::	dc.b	"BC",0
+RegName_DE::	dc.b	"DE",0
+RegName_HL::	dc.b	"HL",0
+RegName_IX::	dc.b	"IX",0
+RegName_IY::	dc.b	"IY",0
+RegName_PC::	dc.b	"PC",0
+RegName_SP::	dc.b	"SP",0
+RegName_A_::	dc.b	"A'",0
+RegName_B_::	dc.b	"B'",0
+RegName_C_::	dc.b	"C'",0
+RegName_D_::	dc.b	"D'",0
+RegName_E_::	dc.b	"E'",0
+RegName_F_::	dc.b	"F'",0
+RegName_H_::	dc.b	"H'",0
+RegName_L_::	dc.b	"L'",0
+RegName_A::	dc.b	"A",0
+RegName_B::	dc.b	"B",0
+RegName_C::	dc.b	"C",0
+RegName_D::	dc.b	"D",0
+RegName_E::	dc.b	"E",0
+RegName_F::	dc.b	"F",0
+RegName_I::	dc.b	"I",0
+RegName_H::	dc.b	"H",0
+RegName_L::	dc.b	"L",0
+RegName_IXH::	dc.b	"IXH",0
+RegName_IXL::	dc.b	"IXL",0
+RegName_IYH::	dc.b	"IYH",0
+RegName_IYL::	dc.b	"IYL",0
+		.even
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+GetFileName::
+*		ファイル名を読み込む。
+*		in	a1	文字列へのポインタ
+*		out	d0	負でエラー
+*			a1	解析終了
+
+		movem.l	d1-d7/a0/a2-a6,-(sp)
+
+		lea	FileNameBuf,a2
+GetFileName_lp::
+		move.b	(a1)+,d0
+		beq	GetFileName_e
+		cmpi.b	#' ',d0
+		beq	GetFileName_e
+		cmpi.b	#9,d0
+		beq	GetFileName_e
+		cmpi.b	#',',d0
+		beq	GetFileName_e
+		move.b	d0,(a2)+
+		bra	GetFileName_lp
+GetFileName_e::
+		clr.b	(a2)
+		subq.w	#1,a1
+		moveq.l	#0,d0
+
+		movem.l	(sp)+,d1-d7/a0/a2-a6
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+PrintRegs::
+*		Z80の全レジスタを表示する。
+*		in	なし
+*		out	なし
+
+		movem.l	d1/a0,-(sp)
+
+		lea	Z80Regs,a0
+
+		pea	PrintRegs_Mes1(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+						* AF
+		move.b	ZR_A(a0),d1
+		ror.w	#8,d1
+		move.b	ZR_F(a0),d1
+		bsr	Print04Hex
+		bsr	PrintSpace
+						* BC
+		move.w	ZR_BC(a0),d1
+		bsr	Print04Hex
+		bsr	PrintSpace
+						* DE
+		move.w	ZR_DE(a0),d1
+		bsr	Print04Hex
+		bsr	PrintSpace
+						* HL
+		move.w	ZR_HL(a0),d1
+		bsr	Print04Hex
+		bsr	PrintSpace
+						* AF'
+		move.b	ZR_A_(a0),d1
+		ror.w	#8,d1
+		move.b	ZR_F_(a0),d1
+		bsr	Print04Hex
+		bsr	PrintSpace
+						* BC'
+		move.w	ZR_BC_(a0),d1
+		bsr	Print04Hex
+		bsr	PrintSpace
+						* DE'
+		move.w	ZR_DE_(a0),d1
+		bsr	Print04Hex
+		bsr	PrintSpace
+						* HL'
+		move.w	ZR_HL_(a0),d1
+		bsr	Print04Hex
+		bsr	PrintSpace
+						* IX
+		move.w	ZR_IX(a0),d1
+		bsr	Print04Hex
+		bsr	PrintSpace
+						* IY
+		move.w	ZR_IY(a0),d1
+		bsr	Print04Hex
+		bsr	PrintSpace
+						* SP
+		move.w	ZR_SP(a0),d1
+		bsr	Print04Hex
+		bsr	PrintSpace
+						* PC
+		move.w	ZR_PC(a0),d1
+		bsr	Print04Hex
+		bsr	PrintSpace
+						* I
+		move.b	ZR_I(a0),d1
+		bsr	Print02Hex
+		bsr	PrintSpace
+						* Flags
+		move.b	ZR_F(a0),d1
+		bsr	PrintFlags
+
+		bsr	PrintCRLF
+
+		bsr	PrintSpace
+		move.w	(DisStartAdr),-(sp)
+		move.w	(Z80Regs+ZR_PC),(DisStartAdr)
+		bsr	Dis1Line
+		move.w	(sp)+,(DisStartAdr)
+
+		movem.l	(sp)+,d1/a0
+		rts
+
+
+PrintRegs_Mes1:		*0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 00 ZCSV
+		dc.b	" AF   BC   DE   HL   AF'  BC'  DE'  HL'  IX   IY   SP   PC  I  ZCSV",13,10,0
+		.even
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+DefineBreakPoint::
+*		ブレークポイントを定義する。
+*		in	d0	ブレークポイント番号（負で適当に探す）
+*			d1	ブレークアドレス
+*		out	d0	セットされたブレークポイント番号
+
+		movem.l	d1-d7/a0-a6,-(sp)
+
+		lea	BreakTable,a6
+		tst.w	d0
+		bpl	DefineBreakPoint_2
+		moveq.l	#BPMAX-1,d2
+DefineBreakPoint_1::
+		addq.w	#1,d0
+		tst.w	BP_Sw(a6)
+		beq	DefineBreakPoint_3
+		lea	SizeOfBP(a6),a6
+		dbra	d2,DefineBreakPoint_1
+		bra	DefineBreakPoint_Err
+DefineBreakPoint_2::
+		move.l	d0,-(sp)
+		mulu	#SizeOfBP,d0
+		adda.l	d0,a6
+		move.l	(sp)+,d0
+DefineBreakPoint_3::
+		move.w	d1,BP_Adr(a6)
+		move.w	#1,BP_Sw(a6)
+
+DefineBreakPoint_e::
+		movem.l	(sp)+,d1-d7/a0-a6
+		rts
+
+DefineBreakPoint_Err::
+		pea	DefineBreakPoint_Err_mes(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+		moveq.l	#-1,d0
+		bra	DefineBreakPoint_e
+DefineBreakPoint_Err_mes::
+		dc.b	"No free BreakPoint.",13,10,0
+		.even
+
+*	*	*	*	*
+
+UndefBreakPoint::
+*		ブレークポイントの定義を取り消す。
+*		in	d0	ブレークポイント番号（負で全て）
+*		out	なし
+
+		movem.l	d1-d7/a0-a6,-(sp)
+
+		lea	BreakTable,a6
+
+		tst.w	d0
+		bpl	UndefBreakPoint_2
+		moveq.l	#0,d0
+		moveq.l	#BPMAX-1,d2
+UndefBreakPoint_1::
+		move.l	d2,d0
+		bsr	UndefBreakPoint
+		dbra	d2,UndefBreakPoint_1
+		bra	UndefBreakPoint_e
+UndefBreakPoint_2::
+		mulu	#SizeOfBP,d0
+		adda.l	d0,a6
+		move.w	#0,BP_Sw(a6)
+
+UndefBreakPoint_e::
+		movem.l	(sp)+,d1-d7/a0-a6
+		rts
+
+*	*	*	*	*
+
+SetBreakPoint::
+*		ブレークポインタをセットする。
+*		in	なし
+*		out	なし
+
+		movem.l	d1-d7/a0-a6,-(sp)
+
+		lea	BreakTable,a6
+		move.l	(Z80Regs+ZR_BASE),a5
+		moveq.l	#BPMAX,d2
+SetBreakPoint_lp::
+		tst.w	BP_Sw(a6)
+		beq	SetBreakPoint_1
+		moveq.l	#0,d1
+		move.w	BP_Adr(a6),d1
+		move.b	(a5,d1.l),BP_Orig(a6)
+		move.b	#$7F,(a5,d1.l)
+SetBreakPoint_1::
+		lea	SizeOfBP(a6),a6
+		dbra	d2,SetBreakPoint_lp
+
+		movem.l	(sp)+,d1-d7/a0-a6
+		rts
+
+*	*	*	*	*
+
+RemoveBreakPoint::
+*		ブレークポインタを元に戻す。
+*		in	なし
+*		out	なし
+
+		movem.l	d1-d7/a0-a6,-(sp)
+
+		lea	BreakTable+BPMAX*SizeOfBP,a6
+		move.l	(Z80Regs+ZR_BASE),a5
+		moveq.l	#BPMAX,d2
+RemoveBreakPoint_lp::
+		tst.w	BP_Sw(a6)
+		beq	RemoveBreakPoint_1
+		moveq.l	#0,d1
+		move.w	BP_Adr(a6),d1
+		move.b	BP_Orig(a6),(a5,d1.l)
+RemoveBreakPoint_1::
+		lea	-SizeOfBP(a6),a6
+		dbra	d2,RemoveBreakPoint_lp
+
+		movem.l	(sp)+,d1-d7/a0-a6
+		rts
+
+*	*	*	*	*
+
+PrintBreakPoint::
+*		ブレークポイントを表示する。
+*		in	なし
+*		out	なし
+
+		movem.l	d1-d7/a0-a6,-(sp)
+
+		lea	BreakTable,a6
+		move.l	(Z80Regs+ZR_BASE),a5
+		moveq.l	#0,d3
+		moveq.l	#BPMAX-1,d2
+PrintBreakPoint_lp::
+		tst.w	BP_Sw(a6)
+		beq	PrintBreakPoint_1
+		move.w	d3,d0
+		bsr	Print1BreakPoint
+PrintBreakPoint_1::
+		addq.w	#1,d3
+		lea	SizeOfBP(a6),a6
+		dbra	d2,PrintBreakPoint_lp
+
+		movem.l	(sp)+,d1-d7/a0-a6
+		rts
+
+Print1BreakPoint::
+		movem.l	d1-d7/a0-a6,-(sp)
+		move.l	d0,-(sp)
+		add.b	#'0',d0
+		move.w	d0,-(sp)
+		DOS	_PUTCHAR
+		addq.w	#2,sp
+		move.l	(sp)+,d0
+		lea	BreakTable,a0
+		mulu	#SizeOfBP,d0
+		move.w	(DisStartAdr),-(sp)
+		move.w	BP_Adr(a0,d0.l),(DisStartAdr)
+		bsr	Dis1Line
+		move.w	(sp)+,(DisStartAdr)
+
+		movem.l	(sp)+,d1-d7/a0-a6
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+HexTable::	dc.b	'0123456789ABCDEF'
+
+Print02Hex::
+*		16進2桁表示。
+*		in	d1	表示数値
+*		out	なし
+
+		move.w	d1,d0
+		ror.w	#4,d0
+		andi.w	#$0f,d0
+		move.b	HexTable(pc,d0.w),d0
+		move.w	d0,-(sp)
+		DOS	_PUTCHAR
+		addq.w	#2,sp
+		move.w	d1,d0
+		andi.w	#$0f,d0
+		move.b	HexTable(pc,d0.w),d0
+		move.w	d0,-(sp)
+		DOS	_PUTCHAR
+		addq.w	#2,sp
+
+		rts
+
+
+Print04Hex::
+*		16進4桁表示。
+*		in	d1	表示数値
+*		out	なし
+
+		ror.w	#8,d1
+		bsr	Print02Hex
+		ror.w	#8,d1
+		bsr	Print02Hex
+
+		rts
+
+
+PrintFlags::
+*		Z80フラグ表示。ZCSVの順で表示。
+*		in	d1	表示数値
+*		out	なし
+
+		move.w	#'0',-(sp)
+		move.w	#'0',-(sp)
+		move.w	#'0',-(sp)
+		move.w	#'0',-(sp)
+		btst	#2,d1
+		beq	@f
+		addq.w	#1,(sp)
+@@:		DOS	_PUTCHAR
+		addq.w	#2,sp
+		btst	#0,d1
+		beq	@f
+		addq.w	#1,(sp)
+@@:		DOS	_PUTCHAR
+		addq.w	#2,sp
+		btst	#3,d1
+		beq	@f
+		addq.w	#1,(sp)
+@@:		DOS	_PUTCHAR
+		addq.w	#2,sp
+		btst	#1,d1
+		beq	@f
+		addq.w	#1,(sp)
+@@:		DOS	_PUTCHAR
+		addq.w	#2,sp
+
+		rts
+
+
+PrintSpace::
+*		空白を表示する。
+*		in	なし
+*		out	なし
+
+		move.w	#' ',-(sp)
+		DOS	_PUTCHAR
+		addq.w	#2,sp
+		rts
+
+
+PrintCRLF::
+*		改行する。
+*		in	なし
+*		out	なし
+
+		move.l	a0,-(sp)
+
+		pea	CRLF_Mes(pc)
+		DOS	_PRINT
+		addq.w	#4,sp
+
+		move.l	(sp)+,a0
+		rts
+
+CRLF_Mes:	dc.b	13,10,0
+		.even
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+ToUpper::
+*		大文字化する。
+*		in	d0	文字
+*		out	d0	文字
+
+		cmpi.b	#'a',d0
+		bcs	ToUpper_e
+		cmpi.b	#'z'+1,d0
+		bcc	ToUpper_e
+		subi.b	#'a'-'A',d0
+ToUpper_e::
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+SkipSpace::
+*		スペースを飛ばす。
+*		in	a1	文字列へのポインタ
+*		out	a1	文字列へのポインタ
+
+		move.l	d0,-(sp)
+SkipSpace_lp::
+		move.b	(a1)+,d0
+		beq	SkipSpace_e
+		cmpi.b	#' ',d0
+		beq	SkipSpace_lp
+		cmpi.b	#9,d0
+		beq	SkipSpace_lp
+SkipSpace_e::
+		subq.w	#1,a1
+
+		move.l	(sp)+,d0
+		rts
+
+
+*	*	*	*	*	*	*	*	*	*
+
+
+		.bss
+
+TXTY::
+		ds.w	1
+Z80DebuggerActive::
+		ds.w	1
+TraceCounter::
+		ds.w	1
+FromBP::
+		ds.w	1
+
+DumpStartAdr::
+		ds.w	1
+DumpEndAdr::
+		ds.w	1
+EditStartAdr::
+		ds.w	1
+EditRegName::
+		ds.w	1
+EditRegSize::
+		ds.w	1
+EditRegParam::
+		ds.w	1
+BreakAdr::
+		ds.w	1
+BreakNo::
+		ds.w	1
+DisStartAdr::
+		ds.w	1
+DisEndAdr::
+		ds.w	1
+FillStartAdr::
+		ds.w	1
+FillEndAdr::
+		ds.w	1
+FillData::
+		ds.w	1
+MoveStartAdr::
+		ds.w	1
+MoveEndAdr::
+		ds.w	1
+MoveToAdr::
+		ds.w	1
+SearchStartAdr::
+		ds.w	1
+SearchEndAdr::
+		ds.w	1
+SearchCount::
+		ds.w	1
+LoadStartAdr::
+		ds.w	1
+SaveStartAdr::
+		ds.w	1
+SaveEndAdr::
+		ds.w	1
+
+
+GetHex_Work::
+		ds.w	1
+GetHex_Mode::
+		ds.w	1
+
+DBErrRetSP::
+		ds.l	1
+DBBreakRetSP::
+		ds.l	1
+DBErrRetSR::
+		ds.w	1
+DBBreakRetSR::
+		ds.w	1
+ErrJobAdr::
+		ds.l	1
+BreakJobAdr::
+		ds.l	1
+
+BreakTable::
+		ds.b	(BPMAX+1)*SizeOfBP
+Z80Regs::
+		ds.l	16
+
+		ds.b	2
+CommandLine::
+		ds.b	256
+
+RegNameBuf::
+		ds.b	256
+
+FileNameBuf::
+		ds.b	256
+
+SearchData::
+		ds.b	256
+
+ExecCmdLineBuf::
+		ds.b	256
+
+
+
+ endif	*****************************************************************
+
+
+

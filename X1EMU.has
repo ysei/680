@@ -3,8 +3,11 @@
 *     ÇwÇPÉGÉ~ÉÖÉåÅ[É^ for X68000 Ver 1.00	*
 *						*
 *	 Copyright 1993/03/21 êXìc ç_éü		*
+*	 Modified  1994/01/20 GORRY.		*
 *						*
 *************************************************
+
+	.cpu	68000
 
 	.xdef	INTRQ
 	.xdef	FCALL
@@ -14,6 +17,7 @@
 	.xdef	V_KEY,V_CTC
 	.xdef	F_REPT,F_SIFT,F_LOCK,F_KBF
 	.xdef	A_RND
+	.xdef	F_DISP
 
 	.xref	Z80,A_BAS
 	.xref	IFF1,V_INT
@@ -31,21 +35,26 @@
 	.xref	A_IOB
 	.xref	END
 
-D_CTC	equ	A_ICTC+2
-V_CTC	equ	A_VCTC+3
+	.xref	Z80DebuggerActive
+	.xref	InitZ80Debugger
 
-aPC	equ	a3
-aTO	equ	a4
-aME	equ	a5
-aBS	equ	a6
+	.xref	PalWork
+
+D_CTC	equ	A_ICTC
+V_CTC	equ	A_VCTC
+
+aPC	reg	a3
+aTO	reg	a4
+aME	reg	a5
+aBS	reg	a6
 
 
 *---------------------------------------*
 *	  ÇhÅ^ÇnÉ|Å[ÉgÉAÉhÉåÉX		*
 *---------------------------------------*
 
-PwTEXTP2	equ	$E40000		* ÉeÉLÉXÉgÉvÉåÅ[ÉìÇQ
-PwTEXTP3	equ	$E60000		* ÉeÉLÉXÉgÉvÉåÅ[ÉìÇR
+PwTEXTP2	equ	$E50000		* ÉeÉLÉXÉgÉvÉåÅ[ÉìÇQ
+PwTEXTP3	equ	$E70000		* ÉeÉLÉXÉgÉvÉåÅ[ÉìÇR
 PwCRTC00	equ	$E80000		* CRTC R00
 PsCRTC20	equ	$E80029		* CRTC R20 L
 PwGRAPAL	equ	$E82000		* ÉOÉâÉtÉBÉbÉNÉpÉåÉbÉg
@@ -59,6 +68,21 @@ PsMFPUDR	equ	$E8802F		* MFP USART ÉfÅ[É^ÉåÉWÉXÉ^
 PsSCCBCP	equ	$E98001		* SCC É`ÉÉÉìÉlÉãÇaÉRÉ}ÉìÉhÉ|Å[Ég
 
 A_RND	equ	PsMFPCDR
+
+
+*---------------------------------------*
+*	X68030ëŒçÙ			*
+*---------------------------------------*
+
+X68030	macro
+	local	l1
+	tst.w	($cbc.w)
+	beq	l1
+	moveq.l	#3,d1
+	moveq.l	#$ac,d0
+	trap	#15
+l1:
+	endm
 
 
 *---------------------------------------*
@@ -79,6 +103,7 @@ START:
 	jsr	SETCRTC
 	jsr	INITPAL
 	jsr	EXTCG
+	jsr	InitZ80Debugger
 	jsr	Z80
 
 	jsr	INITFM
@@ -123,6 +148,7 @@ MSTITL:
 	dc.b	'[m'
  	dc.b	' version 1.00',$0D,$0A
 	dc.b	'Copyright 1993 Koji Morita',$0D,$0A
+	dc.b	'Modified by GORRY(rel1).',$0D,$0A
 	dc.b	0
 
 	.text
@@ -225,6 +251,8 @@ SWTGET:
 	beq.s	SWTGET
 	cmpi.b	#'H',d0
 	beq.w	SWTDSP
+	cmpi.b	#'Z',d0
+	beq.w	SWTDBG
 	cmpi.b	#'?',d0
 	beq.w	SWTUSG
 	bra.w	ERPAR
@@ -277,6 +305,10 @@ SWTCFD:
 SWTDSP:
 	st	F_DISP+1
 	move.b	#1,F_DISP
+	jmp	SWTGET
+
+SWTDBG:
+	move.w	#1,(Z80DebuggerActive)
 	jmp	SWTGET
 
 SWTUSG:
@@ -341,6 +373,9 @@ MSERPR:	dc.b	'ÉpÉâÉÅÅ[É^Ç™ñ≥å¯Ç≈Ç∑',$0D,$0A,0
 MSUSG:	dc.b   'switch:	-F FileName		CONFIGÉtÉ@ÉCÉãÇÃéwíË',$0D,$0A
 	dc.b   '	-D FD{0-3}=FileName	2DÉtÉ@ÉCÉãÇÃéwíË',$0D,$0A
 	dc.b   '	-H			24kHzÉÇÅ[Éh',$0D,$0A
+ if Z80DEBUG
+	dc.b   '	-Z			ç≈èâÇ©ÇÁZ80ÉfÉoÉbÉKÇãNìÆÇ∑ÇÈ',$0D,$0A
+ endif
 	dc.b	0
 	.text
 
@@ -603,13 +638,28 @@ EWCFC2:	bne.s	LPCFCH
 ERCH2C:	move.b	#$FF,d1
 	rts
 
+CNFPSG:
+	lea	CHRON,a0
+	jsr	CMATCH
+	seq	F_PSGSW
+	rts
+
+CNFOPM:
+	lea	CHRON,a0
+	jsr	CMATCH
+	seq	F_OPMSW
+	rts
+
 
 	.data
 F_FDS:	dc.b	0,0,0,0
 F_DISP:	dc.b	2,0
+F_Z80DEBUG:	dc.b	0,0
 F_CONT:	dc.b	0
 F_CAPS:	dc.b	0
 F_KANA:	dc.b	0
+F_PSGSW::	dc.b	1
+F_OPMSW::	dc.b	0
 FNCFDF:	dc.b	'CONFIG.X1',0
 CHRON:	dc.b	'ON',0
 CHROFF:	dc.b	'OFF',0
@@ -637,6 +687,10 @@ CHRCNF:
 	dc.b		'KANA',0,$FF		* OFF / ON
 	dc.l	CNFTVK
 	dc.b		'TVKEY',0,0,$FF		* OFF / ON
+	dc.l	CNFPSG
+	dc.b		'PSG',0,0,$FF		* OFF / ON
+	dc.l	CNFOPM
+	dc.b		'OPM',0,0,$FF		* OFF / ON
 	dc.l	CNFCNF
 	dc.b		'CONFIG',0,$FF
 	dc.l	0
@@ -712,7 +766,7 @@ LPCRT:	move.w	(a0)+,(a1)+
 	jsr	S_TXT
 	rts
 
-RETCRTC:
+RETCRTC::
 	move.l	a0,-(sp)
 	move.w	d1,-(sp)
 	move.l	d0,-(sp)
@@ -793,15 +847,15 @@ S_CONT:	move.w	d2,-(sp)			*  8
 	asl.w	#5,d0				* 16
 	or.b	d1,d0				*  4
 
-	move.w	#%11111_11111_00000_1,d1	*  8
+	move.w	#%11111_11111_00000_0,d1	*  8
 	or.w	d0,d1				*  4
-	move.w	d1,A_PALB+2-A_BAS(aBS)		* 12
-	move.w	#%11111_00000_11111_1,d1	*  8
+	move.w	d1,A_PALB-A_BAS(aBS)		* 12
+	move.w	#%11111_00000_11111_0,d1	*  8
 	or.w	d0,d1				*  4
-	move.w	d1,A_PALR+2-A_BAS(aBS)		* 12
-	move.w	#%00000_11111_11111_1,d1	*  8
+	move.w	d1,A_PALR-A_BAS(aBS)		* 12
+	move.w	#%00000_11111_11111_0,d1	*  8
 	or.w	d0,d1				*  4
-	move.w	d1,A_PALG+2-A_BAS(aBS)		* 12
+	move.w	d1,A_PALG-A_BAS(aBS)		* 12
 
 	lea	D_PAL+02-A_BAS(aBS),a0		*  8
 	lea	FLAOF+04-A_BAS(aBS),a1		*  8
@@ -835,6 +889,13 @@ LPPAL1:	btst	#4,PsMFPGPI			* 20	* bit4 = 0  êÇíºãAê¸ä˙ä‘
 	bne.s	LPPAL1				*  8(10)
 	M_SETP	(a1)+				* 20
 	dbf	d1,LPPAL1			* 14(10)
+
+	lea	D_PAL-A_BAS(aBS),a0		*  8
+	lea	PalWork,a1			* 12
+	move.l	(a0)+,(a1)+
+	move.l	(a0)+,(a1)+
+	move.l	(a0)+,(a1)+
+	move.l	(a0)+,(a1)+
 
 	lea	A_IOB+$1000,a0			* 12
 	lea	PwTXTPAL+16*2,a1		* 12	* ÉeÉLÉXÉgÉpÉåÉbÉg
@@ -904,7 +965,7 @@ SKKL2:
 *	      ÉxÉNÉ^ÉZÉbÉg		*
 *---------------------------------------*
 
-SETVECT:
+SETVECT::
 	move.w	#$001F,d0				* ÇmÇlÇh
 	lea	NMINT,a1
 	jsr	INTVCS
@@ -962,12 +1023,12 @@ INTVCS:
 
 
 	.bss
-B_NMIV:	ds.l	1
-B_BKPV:	ds.l	1
-B_ERRV:	ds.l	1
-B_KEYV:	ds.l	1
-B_TMDV:	ds.l	1
-B_MOUS:	ds.l	1
+B_NMIV::	ds.l	1
+B_BKPV::	ds.l	1
+B_ERRV::	ds.l	1
+B_KEYV::	ds.l	1
+B_TMDV::	ds.l	1
+B_MOUS::	ds.l	1
 	.text
 
 
@@ -975,7 +1036,7 @@ B_MOUS:	ds.l	1
 *	       ÉxÉNÉ^ïúãA		*
 *---------------------------------------*
 
-RETVECT:
+RETVECT::
 	move.l	a1,-(sp)
 	move.w	d1,-(sp)
 	move.l	d0,-(sp)
@@ -1026,8 +1087,9 @@ RETVECT:
 *   ÇmÇlÇhÅCÉuÉåÅ[ÉNÉ|ÉCÉìÉgÅCÉGÉâÅ[	*
 *---------------------------------------*
 
-NMINT:	move.l	B_NMIV,-(sp)
-	bra.s	JMPINT
+NMINT:	move.w	#1,(Z80DebuggerActive)
+	bset	#2,($e8e007)
+	rte
 
 BREAKP:	move.l	B_BKPV,-(sp)
 	bra.s	JMPINT
@@ -1057,6 +1119,9 @@ FCALL:
 
 DOSCALL:
 	move.b	d0,A_DOSC+1-A_BAS(aBS)	* 12
+	move.l	d0,-(sp)
+	X68030
+	move.l	(sp)+,d0
 	lea	(sp),a0			*  4
 
 	moveq	#$0F,d1			*  4
@@ -1180,21 +1245,25 @@ T_FCALL:
 *	      ÇbÇeÇkÇ`ÇrÇg		*
 *---------------------------------------*
 
-FLASH:	bra.w	FLAON							* 10
+FLASH:	tst.w	(FLASHFLAG)
+	beq	FLAON
 
 FLAOF:	move.l	#%00000_00000_00000_0_00000_00000_11111_0,PwGRAPAL+08*2	* 28
 	move.l	#%00000_11111_00000_0_00000_11111_11111_0,PwGRAPAL+10*2	* 28
 	move.l	#%11111_00000_00000_0_11111_00000_11111_0,PwGRAPAL+12*2	* 28
 	move.l	#%11111_11111_00000_0_11111_11111_11111_0,PwGRAPAL+14*2	* 28
-	move.w	#FLAON-(FLASH+2),FLASH+2				* 20
+	move.w	#0,(FLASHFLAG)
 	rte								* 20
 
 FLAON:	move.l	#%11111_11111_11111_0_11111_11111_00000_0,PwGRAPAL+08*2	* 28
 	move.l	#%11111_00000_11111_0_11111_00000_00000_0,PwGRAPAL+10*2	* 28
 	move.l	#%00000_11111_11111_0_00000_11111_00000_0,PwGRAPAL+12*2	* 28
 	move.l	#%00000_00000_11111_0_00000_00000_00000_0,PwGRAPAL+14*2	* 28
-	move.w	#FLAOF-(FLASH+2),FLASH+2				* 20
+	move.w	#1,(FLASHFLAG)
 	rte								* 20
+
+FLASHFLAG:
+	dc.w	0
 
 
 *---------------------------------------*
@@ -1203,21 +1272,25 @@ FLAON:	move.l	#%11111_11111_11111_0_11111_11111_00000_0,PwGRAPAL+08*2	* 28
 
 INTCTC:
 	subq.w	#1,C_CTC		* 20
-	beq.s	A_ICTC			*  8(10)
+	beq.s	A_ICTC_			*  8(10)
 	rte				* 20
 
-A_ICTC:	move.w	#$0001,C_CTC		* 20
+A_ICTC_:
+	move.w	A_ICTC(pc),C_CTC		* 20
 	tst.b	IFF1			* 16
 	beq.s	RTICTC			*  8(10)
 
 	cmpa.l	#T_OPC,aTO		* 14
 	bne.s	RTICTC			*  8(10)
 
-A_VCTC:	move.b	#$00,V_INT		* 20
+A_VCTC_:
+	move.b	A_VCTC(pc),V_INT	* 20
 	lea	T_INT,aTO		* 12
 RTICTC:	rte				* 20
 
 
+A_VCTC:	dc.w	0
+A_ICTC:	dc.w	$0001
 C_CTC:	dc.w	$0001
 
 
@@ -1451,11 +1524,11 @@ F_SIFT:	dc.b	0,0,0,0
 F_LOCK:	dc.b	0,0
 	.even
 
-RETINTA	equ	.loww.(RETINT-D_KEY).w
-RETTVKA	equ	.loww.(RETTVK-D_KEY).w
-RETNOIA	equ	.loww.(RETNOI-D_KEY).w
-RETOFIA	equ	.loww.(RETOFI-D_KEY).w
-RETOFTA	equ	.loww.(RETOFT-D_KEY).w
+RETINTA	reg	.loww.(RETINT-D_KEY).w
+RETTVKA	reg	.loww.(RETTVK-D_KEY).w
+RETNOIA	reg	.loww.(RETNOI-D_KEY).w
+RETOFIA	reg	.loww.(RETOFI-D_KEY).w
+RETOFTA	reg	.loww.(RETOFT-D_KEY).w
 
 T_KEY:
 	dcb.w	1-$00+$00,RETNOIA
@@ -1517,5 +1590,5 @@ P_RKB:	dc.w	$00FE
 B_KEY:	ds.b	$100
 
 
-	.end
+	.end	START
 
